@@ -14,6 +14,7 @@ from sara_retrieve_rerank.config import (
     BATCH_SIZE,
     DEFAULT_CANDIDATES_PATH,
     DEFAULT_MATCHES_OUTPUT_PATH,
+    DEFAULT_RERANK_FEATURES_OUTPUT_PATH,
     DEFAULT_VACANCIES_PATH,
     EMBEDDING_MODEL,
     TOP_K,
@@ -21,6 +22,7 @@ from sara_retrieve_rerank.config import (
 from sara_retrieve_rerank.data import load_jsonl, write_jsonl
 from sara_retrieve_rerank.documents import create_vacancy_documents
 from sara_retrieve_rerank.retrieval import retrieve_all_matches
+from sara_retrieve_rerank.reranking import build_pair_feature_rows
 from sara_retrieve_rerank.vector_store import create_vectorstore, index_documents
 
 
@@ -29,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidates-path", default=str(DEFAULT_CANDIDATES_PATH))
     parser.add_argument("--vacancies-path", default=str(DEFAULT_VACANCIES_PATH))
     parser.add_argument("--output-path", default=str(DEFAULT_MATCHES_OUTPUT_PATH))
+    parser.add_argument(
+        "--feature-output-path",
+        default=None,
+        help=f"Optionally save labeled reranker feature rows. Example: {DEFAULT_RERANK_FEATURES_OUTPUT_PATH}",
+    )
     parser.add_argument("--embedding-model", default=EMBEDDING_MODEL)
     parser.add_argument("--top-k", type=int, default=TOP_K)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -55,6 +62,11 @@ def main() -> None:
     matches = retrieve_all_matches(candidates, vectorstore, k=args.top_k)
     write_jsonl(matches, args.output_path)
     print(f"Saved {len(matches)} matches to {args.output_path}")
+
+    if args.feature_output_path:
+        feature_rows = build_pair_feature_rows(candidates, matches)
+        write_jsonl(feature_rows, args.feature_output_path)
+        print(f"Saved {len(feature_rows)} reranker feature rows to {args.feature_output_path}")
 
 
 if __name__ == "__main__":

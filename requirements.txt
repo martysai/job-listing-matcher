@@ -8,6 +8,7 @@ langchain-community
 langchain-litellm
 sentence-transformers
 rank-bm25
+lightgbm
 lxml
 beautifulsoup4
 matplotlib

@@ -220,3 +220,10 @@ chroma/
 
 # macOS
 .DS_Store
+
+# Local/generated data
+data/processed/
+data/raw/
+
+# Local agent/editor state
+.claude/

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from langchain_chroma import Chroma
 
 from sara_retrieve_rerank.config import TOP_K
@@ -39,6 +41,17 @@ def retrieve_top_vacancy_ids(candidate: dict, vectorstore: Chroma, k: int = TOP_
     query = candidate_to_query(candidate)
     results = vectorstore.similarity_search_with_score(query, k=k)
     return [doc.metadata["dataset_id"] for doc, _score in results]
+
+
+def retrieve_and_rerank_top_vacancies(
+    candidate: dict,
+    vectorstore: Chroma,
+    reranker: Callable[[dict, list[dict]], list[dict]],
+    k: int = TOP_K,
+) -> list[dict]:
+    """Retrieve top-K matches with Chroma, then reorder them with a reranker."""
+    matches = retrieve_top_vacancies(candidate, vectorstore, k=k)
+    return reranker(candidate, matches)
 
 
 def retrieve_all_matches(candidates: list[dict], vectorstore: Chroma, k: int = TOP_K) -> list[dict]:

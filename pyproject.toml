@@ -20,6 +20,11 @@ dependencies = [
     "matplotlib",
 ]
 
+[project.optional-dependencies]
+rerank = [
+    "lightgbm",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
