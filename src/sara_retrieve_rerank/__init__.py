@@ -7,6 +7,7 @@ __all__ = [
     "documents",
     "vector_store",
     "retrieval",
+    "reranking",
     "evaluation",
     "visualization",
 ]

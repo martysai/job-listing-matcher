@@ -22,6 +22,9 @@ required_modules = [
     "sentence_transformers",
     "chromadb",
 ]
+optional_modules = [
+    ("lightgbm", "LambdaRank reranker training"),
+]
 
 missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
 if missing:
@@ -34,3 +37,11 @@ if missing:
     raise SystemExit(1)
 
 print("Environment OK: all required modules are importable.")
+
+missing_optional = [
+    (name, feature) for name, feature in optional_modules if importlib.util.find_spec(name) is None
+]
+if missing_optional:
+    print("Optional modules missing:")
+    for name, feature in missing_optional:
+        print(f"  - {name}: needed for {feature}")

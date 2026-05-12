@@ -118,11 +118,122 @@ Run retrieval for all candidates and save matches:
 python scripts/run_retrieval.py
 ```
 
+Default retrieval now writes top-20 matches per candidate (`TOP_K=20`) for faster rerank
+feature generation. Evaluation can still compute Recall@K up to 100 because it retrieves
+directly from Chroma during `scripts/evaluate.py`.
+
 Evaluate Recall@K:
 
 ```bash
 python scripts/evaluate.py
 ```
+
+## Reranking experiment
+
+Create the same top-K retrieval output plus labeled reranker feature rows:
+
+```bash
+python scripts/run_retrieval.py --feature-output-path data/processed/rerank_features_top20.jsonl
+```
+
+Add LLM expert score columns such as `location_score`, `seniority_score`,
+`salary_score`, `experience_score`, and `general_score`:
+
+```bash
+python scripts/score_rerank_experts.py --max-rows 100
+```
+
+For rate-limit safety, configure `.env` (see `.env.example`) or export:
+
+```bash
+export RERANK_REQUEST_DELAY_SECONDS=2.0
+export RERANK_RATE_LIMIT_MAX_RETRIES=6
+export RERANK_RATE_LIMIT_BACKOFF_BASE_SECONDS=2.0
+export RERANK_RATE_LIMIT_BACKOFF_MAX_SECONDS=60.0
+export RERANK_MAX_CONCURRENCY=1
+export RERANK_MICRO_BATCH_SIZE=4
+export RERANK_MICRO_BATCH_AUTOTUNE=true
+export RERANK_SCORING_VALIDATION_FRACTION=0.2
+export RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE=4
+export RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE=4
+export RERANK_LLM_PROVIDER=litellm
+export RERANK_LLM_MODEL=mistral/mistral-small-latest
+```
+
+`scripts/score_rerank_experts.py` auto-loads `.env` from the project root before parsing CLI args.
+
+`score_rerank_experts.py` now:
+- scores only candidate groups where retrieval contains at least one positive label,
+- for LLM scoring only: subsamples both train and validation groups to
+  positive + 4 negatives per candidate by default before any LLM calls,
+- asks for all five expert fields in one JSON response per candidate-vacancy pair,
+- supports micro-batching multiple pairs into one LLM request (`RERANK_MICRO_BATCH_SIZE`),
+- retries rate-limited calls with exponential backoff,
+- sleeps between requests,
+- prints progress while scoring.
+
+With top-20 retrieval this reduces LLM-scored rows to about `5` rows/group for the
+positive-retrieval candidate groups (configurable via env vars above).
+
+For faster and safer runs, keep `RERANK_MAX_CONCURRENCY=1` unless your provider quota is high.
+Optionally use a local model (for example Ollama) to avoid hosted API rate limits:
+
+```bash
+export RERANK_LLM_PROVIDER=ollama
+export RERANK_LLM_MODEL=ollama_chat/qwen2.5:3b-instruct
+export RERANK_LLM_API_BASE=http://localhost:11434
+export RERANK_MAX_CONCURRENCY=1
+export RERANK_REQUEST_DELAY_SECONDS=0
+python scripts/score_rerank_experts.py
+```
+
+Use quick benchmark mode to test the pipeline on ~5% of users before long runs:
+
+```bash
+python scripts/score_rerank_experts.py --benchmark-mode
+```
+
+Optional benchmark controls:
+- `--benchmark-user-fraction` (default from `RERANK_BENCHMARK_USER_FRACTION=0.05`)
+- `--benchmark-seed`
+- `--micro-batch-size` and `RERANK_MICRO_BATCH_AUTOTUNE=true` to auto-keep batching only when it is faster on a short local benchmark.
+
+Then compare the original cosine ranking with a weighted LLM baseline:
+
+```bash
+python scripts/evaluate.py --rerank-features-path data/processed/rerank_features_scored_top20.jsonl
+```
+
+To train and validate a LightGBM LambdaRank model on the cached feature rows:
+
+```bash
+python scripts/evaluate.py --rerank-features-path data/processed/rerank_features_scored_top20.jsonl --train-lambdarank
+```
+
+When `--train-lambdarank` is enabled, the script now also saves:
+- train rows for LightGBM (`data/processed/lambdarank_train_rows_top20.jsonl`)
+- validation rows (`data/processed/lambdarank_validation_rows_top20.jsonl`)
+- validation rows with `lambdarank_score` (`data/processed/lambdarank_validation_scored_top20.jsonl`)
+- fitted model (`outputs/lambdarank_model_top20.pkl`)
+
+It prints metrics for:
+- baseline cosine on all rows
+- baseline weighted expert average on all rows
+- cosine on LambdaRank validation split
+- weighted expert average on LambdaRank validation split
+- LambdaRank score on the same validation split
+
+It also prints compact method-comparison tables and saves comparison charts by default:
+- `outputs/rerank_method_comparison_all_rows.png`
+- `outputs/rerank_method_comparison_validation.png` (when `--train-lambdarank` is used)
+
+The reusable reranking helpers live in `src/sara_retrieve_rerank/reranking.py`.
+LightGBM is optional for the base retriever, but install the full requirements or
+`python -m pip install -e ".[rerank]"` before using `--train-lambdarank`.
+LambdaRank training keeps all positives and subsamples negatives to `4` per candidate
+by default (`RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE` in config). Validation-group
+negative subsampling for LLM scoring is controlled separately with
+`RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE`.
 
 ## VS Code notebook setup
 
