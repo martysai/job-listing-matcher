@@ -13,3 +13,4 @@ lxml
 beautifulsoup4
 matplotlib
 pytest
+requests

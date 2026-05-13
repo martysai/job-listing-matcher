@@ -224,6 +224,7 @@ chroma/
 # Local/generated data
 data/processed/
 data/raw/
+data/cache/
 
 # Local agent/editor state
 .claude/
