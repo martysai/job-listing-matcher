@@ -40,6 +40,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=TOP_K)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--persist-directory", default=None, help="Set a directory to persist Chroma. Defaults to in-memory.")
+    parser.add_argument(
+        "--report-recall-ks",
+        nargs="+",
+        type=int,
+        default=None,
+        help=(
+            "Optionally print Recall@K from the produced matches. "
+            "For meaningful values, keep each K <= --top-k."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -62,6 +72,26 @@ def main() -> None:
     matches = retrieve_all_matches(candidates, vectorstore, k=args.top_k)
     write_jsonl(matches, args.output_path)
     print(f"Saved {len(matches)} matches to {args.output_path}")
+
+    if args.report_recall_ks:
+        from sara_retrieve_rerank.evaluation import evaluate_matches_retriever
+
+        ks = sorted(set(args.report_recall_ks))
+        if any(k <= 0 for k in ks):
+            raise ValueError("--report-recall-ks values must be positive integers")
+        if any(k > args.top_k for k in ks):
+            print(
+                "Warning: some requested Recall@K values are greater than --top-k; "
+                "those metrics are capped by available retrieved matches."
+            )
+        metrics = evaluate_matches_retriever(candidates, matches, ks=ks)
+        print("[retrieval.recall_from_matches]")
+        for k in ks:
+            print(f"recall@{k}", metrics[f"recall@{k}"])
+        print("num_candidates", metrics["num_candidates"])
+        max_k = max(ks)
+        print(f"num_hits@{max_k}", metrics["num_hits@max_k"])
+        print(f"num_misses@{max_k}", metrics["num_misses@max_k"])
 
     if args.feature_output_path:
         feature_rows = build_pair_feature_rows(candidates, matches)

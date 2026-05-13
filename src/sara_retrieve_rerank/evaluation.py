@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Sequence
 
 from langchain_chroma import Chroma
@@ -54,6 +55,64 @@ def evaluate_retriever(
         true_vacancy_id = candidate["source_vacancy_id"]
         retrieved_ids = retrieve_top_vacancy_ids(candidate, vectorstore, k=max_k)
 
+        if true_vacancy_id in retrieved_ids:
+            rank = retrieved_ids.index(true_vacancy_id) + 1
+            for k in ks:
+                if rank <= k:
+                    hits_by_k[k] += 1
+
+    n = len(evaluated_candidates)
+    metrics = {f"recall@{k}": hits_by_k[k] / n for k in ks}
+    metrics["num_candidates"] = n
+    metrics["num_hits@max_k"] = hits_by_k[max_k]
+    metrics["num_misses@max_k"] = n - hits_by_k[max_k]
+    return metrics
+
+
+def evaluate_matches_retriever(
+    candidates: Sequence[dict],
+    matches: Sequence[dict],
+    *,
+    ks: Sequence[int] = DEFAULT_EVAL_KS,
+) -> dict[str, float | int]:
+    """Evaluate Recall@K using saved candidate-vacancy match rows with rank fields."""
+    evaluated_candidates = candidates_with_ground_truth(candidates)
+    if not evaluated_candidates:
+        return {f"recall@{k}": 0.0 for k in ks} | {
+            "num_candidates": 0,
+            "num_hits@max_k": 0,
+            "num_misses@max_k": 0,
+        }
+
+    if not ks:
+        return {
+            "num_candidates": len(evaluated_candidates),
+            "num_hits@max_k": 0,
+            "num_misses@max_k": len(evaluated_candidates),
+        }
+
+    max_k = max(ks)
+    grouped_matches: dict[str, list[dict]] = defaultdict(list)
+    for match in matches:
+        candidate_id = match.get("candidate_id")
+        if candidate_id is None:
+            continue
+        grouped_matches[str(candidate_id)].append(match)
+
+    ranked_ids_by_candidate: dict[str, list[str]] = {}
+    for candidate_id, candidate_matches in grouped_matches.items():
+        ranked = sorted(candidate_matches, key=lambda row: int(row.get("rank") or 0))
+        ranked_ids_by_candidate[candidate_id] = [
+            str(row.get("vacancy_id"))
+            for row in ranked
+            if row.get("vacancy_id") is not None and int(row.get("rank") or 0) > 0
+        ][:max_k]
+
+    hits_by_k = {k: 0 for k in ks}
+    for candidate in evaluated_candidates:
+        candidate_id = str(candidate.get("id"))
+        true_vacancy_id = str(candidate.get("source_vacancy_id"))
+        retrieved_ids = ranked_ids_by_candidate.get(candidate_id, [])
         if true_vacancy_id in retrieved_ids:
             rank = retrieved_ids.index(true_vacancy_id) + 1
             for k in ks:

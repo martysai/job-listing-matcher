@@ -122,11 +122,41 @@ Default retrieval now writes top-20 matches per candidate (`TOP_K=20`) for faste
 feature generation. Evaluation can still compute Recall@K up to 100 because it retrieves
 directly from Chroma during `scripts/evaluate.py`.
 
+Optional: print Recall@K directly from produced match rows (no extra retrieval pass):
+
+```bash
+python scripts/run_retrieval.py --report-recall-ks 20
+```
+
+To measure `recall@100`, run retrieval with `--top-k 100` and request both Ks:
+
+```bash
+python scripts/run_retrieval.py \
+  --top-k 100 \
+  --output-path data/processed/candidate_vacancy_matches_top100.jsonl \
+  --report-recall-ks 20 100
+```
+
 Evaluate Recall@K:
 
 ```bash
 python scripts/evaluate.py
 ```
+
+To explicitly print `recall@20` and `recall@100` from Chroma:
+
+```bash
+python scripts/evaluate.py --ks 20 100 --misses-k 100
+```
+
+### Retrieval metrics snapshot
+
+From cached match files in `data/processed/`:
+
+| Retrieval run | Candidates with ground truth | Recall@20 | Recall@100 |
+| --- | ---: | ---: | ---: |
+| top-20 output (`candidate_vacancy_matches_top20.jsonl`) | 4,995 | 0.6677 (3,335 / 4,995) | n/a (max rank is 20) |
+| top-100 output (`candidate_vacancy_matches_top100.jsonl`) | 4,995 | 0.6705 (3,348 / 4,995) | 0.7926 (3,959 / 4,995) |
 
 ## Reranking experiment
 
@@ -154,8 +184,8 @@ export RERANK_MAX_CONCURRENCY=1
 export RERANK_MICRO_BATCH_SIZE=4
 export RERANK_MICRO_BATCH_AUTOTUNE=true
 export RERANK_SCORING_VALIDATION_FRACTION=0.2
-export RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE=4
-export RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE=4
+export RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE=1
+export RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE=19
 export RERANK_LLM_PROVIDER=litellm
 export RERANK_LLM_MODEL=mistral/mistral-small-latest
 ```
@@ -164,16 +194,20 @@ export RERANK_LLM_MODEL=mistral/mistral-small-latest
 
 `score_rerank_experts.py` now:
 - scores only candidate groups where retrieval contains at least one positive label,
-- for LLM scoring only: subsamples both train and validation groups to
-  positive + 4 negatives per candidate by default before any LLM calls,
+- for LLM scoring only: subsamples negatives per candidate separately for train
+  and validation (`RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE` and
+  `RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE`),
 - asks for all five expert fields in one JSON response per candidate-vacancy pair,
 - supports micro-batching multiple pairs into one LLM request (`RERANK_MICRO_BATCH_SIZE`),
 - retries rate-limited calls with exponential backoff,
 - sleeps between requests,
+- supports additive resume mode with `--rewrite-mode` and periodic persistence
+  with `--checkpoint-every`,
 - prints progress while scoring.
 
-With top-20 retrieval this reduces LLM-scored rows to about `5` rows/group for the
-positive-retrieval candidate groups (configurable via env vars above).
+With top-20 retrieval, row count and scoring cost depend heavily on the negative
+sampling caps above. Use smaller train caps for cheaper LLM scoring and larger
+validation caps for stronger reranker evaluation coverage.
 
 For faster and safer runs, keep `RERANK_MAX_CONCURRENCY=1` unless your provider quota is high.
 Optionally use a local model (for example Ollama) to avoid hosted API rate limits:
@@ -227,12 +261,68 @@ It also prints compact method-comparison tables and saves comparison charts by d
 - `outputs/rerank_method_comparison_all_rows.png`
 - `outputs/rerank_method_comparison_validation.png` (when `--train-lambdarank` is used)
 
+### Latest reranking results (top-20, scored features)
+
+Command:
+
+```bash
+python scripts/evaluate.py --rerank-features-path data/processed/rerank_features_scored_top20.jsonl --train-lambdarank
+```
+
+Dataset summary:
+
+| Metric | Value |
+| --- | ---: |
+| Feature rows loaded | 28,760 |
+| Candidate groups (all rows) | 3,333 |
+| LambdaRank train rows | 15,420 |
+| LambdaRank validation rows | 13,340 |
+| LambdaRank train groups | 2,666 |
+| LambdaRank validation groups | 667 |
+| Train rows per group | 5.78 |
+| Validation rows per group | 20.00 |
+
+All rows comparison:
+
+| Method | Recall@1 | NDCG@1 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Δ NDCG@10 vs cosine |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `cosine_similarity` | 0.6949 | 0.6949 | 0.9418 | 0.8278 | 0.9817 | 0.8411 | +0.0000 |
+| `weighted_llm_score` | 0.5053 | 0.5053 | 0.9415 | 0.7423 | 0.9877 | 0.7576 | -0.0834 |
+
+Validation comparison (same split used for LambdaRank model validation):
+
+| Method | Recall@1 | NDCG@1 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Δ NDCG@10 vs cosine |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `cosine_similarity` | 0.5517 | 0.5517 | 0.7901 | 0.6830 | 0.9085 | 0.7206 | +0.0000 |
+| `weighted_llm_score` | 0.2729 | 0.2729 | 0.7256 | 0.5035 | 0.9385 | 0.5735 | -0.1471 |
+| `lambdarank_score` | 0.6027 | 0.6027 | 0.9175 | 0.7683 | 0.9790 | 0.7884 | +0.0677 |
+
+Key takeaway:
+- On validation, LambdaRank improved `ndcg@10` from `0.7206` (cosine baseline) to `0.7884` (`+0.0677`).
+- Funnel view:
+  - retriever finds the true vacancy in top-20 for about `67.0%` of labeled candidates,
+  - on the reranker validation split (top-20 hit groups), LambdaRank places the true vacancy
+    at rank 1 in `60.3%` of cases and within top-10 in `97.9%` of cases.
+
+Saved artifacts:
+- `data/processed/lambdarank_train_rows_top20.jsonl`
+- `data/processed/lambdarank_validation_rows_top20.jsonl`
+- `data/processed/lambdarank_validation_scored_top20.jsonl`
+- `outputs/lambdarank_model_top20.pkl`
+- `outputs/rerank_method_comparison_all_rows.png`
+- `outputs/rerank_method_comparison_validation.png`
+
+Comparison plots:
+
+![All rows comparison](outputs/rerank_method_comparison_all_rows.png)
+![Validation comparison](outputs/rerank_method_comparison_validation.png)
+
 The reusable reranking helpers live in `src/sara_retrieve_rerank/reranking.py`.
 LightGBM is optional for the base retriever, but install the full requirements or
 `python -m pip install -e ".[rerank]"` before using `--train-lambdarank`.
-LambdaRank training keeps all positives and subsamples negatives to `4` per candidate
-by default (`RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE` in config). Validation-group
-negative subsampling for LLM scoring is controlled separately with
+LambdaRank training keeps all positives and uses
+`RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE` for train-group negative subsampling.
+Validation-group negative subsampling for LLM scoring is controlled separately with
 `RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE`.
 
 ## VS Code notebook setup
