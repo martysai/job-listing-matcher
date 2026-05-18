@@ -19,6 +19,7 @@ dependencies = [
     "beautifulsoup4",
     "matplotlib",
     "pyyaml",
+    "requests",
 ]
 
 [project.optional-dependencies]
