@@ -7,7 +7,11 @@ __all__ = [
     "documents",
     "vector_store",
     "retrieval",
+    "bm25_retrieval",
+    "hybrid_retrieval",
+    "pipeline",
     "reranking",
     "evaluation",
+    "llm_logging",
     "visualization",
 ]
