@@ -27,6 +27,13 @@ DEFAULT_LLM_SCORE_FIELDS = (
     "general_score",
 )
 DEFAULT_FEATURE_FIELDS = ("cosine_similarity",) + DEFAULT_LLM_SCORE_FIELDS
+# Opt-in feature set used when retrieval rows carry a `bm25_score` column
+# (produced by the BM25 or hybrid retriever). Existing callers and tests that
+# rely on `DEFAULT_FEATURE_FIELDS` are unaffected.
+DEFAULT_FEATURE_FIELDS_WITH_BM25 = (
+    "cosine_similarity",
+    "bm25_score",
+) + DEFAULT_LLM_SCORE_FIELDS
 SINGLE_PAIR_JSON_SCORE_PROMPT = """\
 You are an expert recruiter assistant scoring candidate-vacancy match quality.
 

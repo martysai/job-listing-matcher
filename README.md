@@ -104,6 +104,14 @@ If your default `python3` is too new for one of the ML packages, install Python 
 PYTHON_BIN=python3.11 bash scripts/setup_env.sh
 ```
 
+## Configuration
+
+Module defaults in [src/sara_retrieve_rerank/config.py](src/sara_retrieve_rerank/config.py)
+can be overridden by a [config.yaml](config.yaml) file at the project root.
+Any key missing from `config.yaml` (or a missing file altogether) falls back
+to the in-code default, so the YAML file is optional and existing scripts
+behave the same way without it.
+
 ## Run the pipeline
 
 Build an index only:
@@ -117,6 +125,34 @@ Run retrieval for all candidates and save matches:
 ```bash
 python scripts/run_retrieval.py
 ```
+
+### Retriever choice (dense / BM25 / hybrid)
+
+`run_retrieval.py` accepts `--retriever={dense,bm25,hybrid}`. The default is
+the original dense (Chroma) retriever to preserve existing reproducibility.
+BM25 is a sparse keyword retriever (from `rank_bm25`) over the same vacancy
+documents. Hybrid fuses dense and BM25 via reciprocal rank fusion (RRF):
+
+```bash
+# Pure BM25 (no embedding model needed)
+python scripts/run_retrieval.py --retriever bm25 --top-k 20
+
+# Hybrid: dense top-40 + BM25 top-40 fused into top-20
+python scripts/run_retrieval.py --retriever hybrid --top-k 20
+
+# Tweak fusion: weight BM25 higher and shrink RRF constant for sharper top-K
+python scripts/run_retrieval.py \
+  --retriever hybrid \
+  --hybrid-weight-bm25 1.5 \
+  --hybrid-weight-dense 1.0 \
+  --hybrid-rrf-k 30
+```
+
+Hybrid matches emit additional fields per row: `bm25_score`, `rrf_score`,
+`dense_rank`, and `bm25_rank`. These are persisted by `run_retrieval.py` and
+can later be consumed by the reranker — pass `--use-bm25-feature` to
+`scripts/evaluate.py --train-lambdarank` to include `bm25_score` as an extra
+LambdaRank input feature.
 
 Default retrieval now writes top-20 matches per candidate (`TOP_K=20`) for faster rerank
 feature generation. Evaluation can still compute Recall@K up to 100 because it retrieves
@@ -368,10 +404,97 @@ source .venv/bin/activate
 
 After activation, `python` should work.
 
+## LLM call audit logging
+
+Pass `--llm-log-path data/logs/rerank_llm.jsonl` (or set
+`RERANK_LLM_LOG_PATH`) when running `scripts/score_rerank_experts.py` to
+record every LLM call as a JSONL row containing the prompt, response,
+latency, and any error. The helper lives in
+[src/sara_retrieve_rerank/llm_logging.py](src/sara_retrieve_rerank/llm_logging.py)
+and can be reused to wrap any future LLM-based component (CV parser,
+chat agent, query rewriter) without changing call sites.
+
+## Persistent index & high-level pipeline
+
+`src/sara_retrieve_rerank/pipeline.py` exposes a single
+`RecommendationPipeline` class that wraps:
+
+- the persistent Chroma index (reused from `data/chroma` when present),
+- an in-memory BM25 index built from the same vacancy documents, and
+- an optional LambdaRank reranker loaded from a pickle.
+
+```python
+from sara_retrieve_rerank.pipeline import RecommendationPipeline
+
+pipeline = RecommendationPipeline(
+    vacancies_path="data/raw/vacancies_safe_ml_dataset_nozip.jsonl",
+    reranker_model_path="outputs/lambdarank_model_top20.pkl",
+)
+matches = pipeline.match(
+    {"id": "alice", "text": "Senior ML engineer with PyTorch experience"},
+    k=10,
+    retriever="hybrid",
+)
+```
+
+The first run builds the Chroma index and writes it to `data/chroma`.
+Subsequent runs reuse it, so process startup is fast — this is the seam any
+UI / API layer is meant to import.
+
+## Error analysis
+
+After running retrieval, break down the misses by candidate and vacancy
+attributes:
+
+```bash
+python scripts/analyze_misses.py \
+  --candidates-path data/raw/results_5000_scores_acknowledged.jsonl \
+  --vacancies-path data/raw/vacancies_safe_ml_dataset_nozip.jsonl \
+  --matches-path data/processed/candidate_vacancy_matches_top20.jsonl \
+  --k 20
+```
+
+The script prints:
+
+- Recall@K and miss count.
+- Candidate text length distribution for hits vs. misses (so we can see
+  whether short CVs are systematically harder to retrieve for).
+- Frequency of locale signals (`remote`, `hybrid`, `visa`, `english`, ...)
+  in missed candidates' text.
+- The top vacancy fields — `specializations`, `work_format`, `regions`,
+  `english_level` — that appear in the ground-truth vacancies of misses,
+  so we can see which kinds of roles the retriever blind-spots.
+
+### Known limitations (honest assessment)
+
+- **Cold start / sparse CVs.** Recall@20 currently sits at ~67%. Inspection
+  shows short candidate texts (< 200 chars) are over-represented in the
+  miss set: with fewer keywords the dense retriever has less to anchor on
+  and BM25 has fewer term matches. Hybrid retrieval mitigates this but
+  does not eliminate it.
+- **Specialization blind spots.** Some specializations are under-represented
+  in the training corpus, so cosine similarity gives diffuse top-K lists.
+  The error-analysis script surfaces which specializations these are so we
+  can target prompt or schema improvements.
+- **Offline → online quality drift.** The LambdaRank reranker is trained on
+  cached offline matches. Switching to live data (Adzuna) may degrade
+  ranking quality until features are recomputed; this is intentional
+  scope for the next iteration.
+
+## Tests and CI
+
+Run the full test suite:
+
+```bash
+python -m pytest tests/
+```
+
+A GitHub Actions workflow at [.github/workflows/tests.yml](.github/workflows/tests.yml)
+runs the same suite on every push and pull request against `main`.
+
 ## Good next refactoring targets
 
-- Add BM25 / hybrid retrieval in a separate module.
-- Add reranking as a separate `reranking.py` module.
-- Add config files for experiments.
-- Add cached Chroma persistence for faster iteration.
-- Add small fixtures so tests can run without the full dataset.
+- Add a query-rewriter LLM step for sparse / short CVs (cold-start fix).
+- Train the LambdaRank reranker on hybrid (BM25 + dense) candidate pools.
+- Add the Adzuna tool-call so live searches augment the cached corpus.
+- Add cross-encoder reranking on the top-50 fused candidates.

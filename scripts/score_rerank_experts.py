@@ -26,6 +26,10 @@ from sara_retrieve_rerank.config import (
     RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE,
 )
 from sara_retrieve_rerank.data import load_jsonl, write_jsonl
+from sara_retrieve_rerank.llm_logging import (
+    setup_llm_jsonl_logger,
+    wrap_invoke_with_logging,
+)
 from sara_retrieve_rerank.reranking import (
     DEFAULT_LLM_SCORE_FIELDS,
     build_pair_feature_rows,
@@ -66,6 +70,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Reuse already-scored candidate/vacancy pairs from --output-path and "
             "score only missing pairs."
+        ),
+    )
+    parser.add_argument(
+        "--llm-log-path",
+        default=os.getenv("RERANK_LLM_LOG_PATH"),
+        help=(
+            "When set, write a JSONL audit trail of every LLM call (prompt, "
+            "response, latency, errors) to this path."
         ),
     )
     return parser.parse_args()
@@ -255,6 +267,14 @@ def main() -> None:
         backoff_max_seconds=backoff_max_seconds,
         on_retry=_on_rate_limit_retry,
     )
+    if args.llm_log_path:
+        llm_logger = setup_llm_jsonl_logger(args.llm_log_path)
+        invoke = wrap_invoke_with_logging(
+            invoke,
+            logger=llm_logger,
+            component="rerank_experts",
+        )
+        print(f"LLM call audit trail: {args.llm_log_path}")
     micro_batch_autotune = _env_bool(
         "RERANK_MICRO_BATCH_AUTOTUNE",
         default=(provider.strip().lower() == "ollama" and micro_batch_size > 1),

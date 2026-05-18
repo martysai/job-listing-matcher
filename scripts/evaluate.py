@@ -34,6 +34,8 @@ from sara_retrieve_rerank.reranking import (
     train_lambdarank,
 )
 
+BM25_FEATURE_FIELD = "bm25_score"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate candidate-to-vacancy retrieval.")
@@ -51,6 +53,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--rerank-ks", nargs="+", type=int, default=list(DEFAULT_RERANK_KS))
     parser.add_argument("--weighted-score-fields", nargs="+", default=list(DEFAULT_LLM_SCORE_FIELDS))
+    parser.add_argument(
+        "--use-bm25-feature",
+        action="store_true",
+        help=(
+            "Include `bm25_score` as a LambdaRank feature when the rerank feature rows "
+            "carry it (produced by --retriever={bm25,hybrid} in run_retrieval.py)."
+        ),
+    )
     parser.add_argument("--train-lambdarank", action="store_true")
     parser.add_argument("--validation-fraction", type=float, default=0.2)
     parser.add_argument("--random-seed", type=int, default=42)
@@ -161,6 +171,15 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
         return
 
     feature_fields = ["cosine_similarity", *weighted_fields]
+    if args.use_bm25_feature and any(BM25_FEATURE_FIELD in row for row in rows):
+        if BM25_FEATURE_FIELD not in feature_fields:
+            feature_fields.insert(1, BM25_FEATURE_FIELD)
+        print(f"[features] including {BM25_FEATURE_FIELD} in LambdaRank features")
+    elif args.use_bm25_feature:
+        print(
+            f"[features] --use-bm25-feature set but no rows carry {BM25_FEATURE_FIELD}; "
+            "re-run retrieval with --retriever={bm25,hybrid} first"
+        )
     model, train_rows, validation_rows = train_lambdarank(
         weighted_rows_all,
         feature_fields=feature_fields,

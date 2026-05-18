@@ -9,6 +9,7 @@ langchain-litellm
 sentence-transformers
 rank-bm25
 lightgbm
+pyyaml
 lxml
 beautifulsoup4
 matplotlib
