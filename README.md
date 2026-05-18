@@ -20,26 +20,36 @@ The current pipeline is preserved:
 │   ├── sara_retrieve_rerank_original.ipynb
 │   └── sara_retrieve_rerank_refactored.ipynb
 ├── src/sara_retrieve_rerank/
-│   ├── config.py
-│   ├── data.py
-│   ├── preprocessing.py
-│   ├── documents.py
-│   ├── vector_store.py
-│   ├── retrieval.py
-│   ├── evaluation.py
+│   ├── config.py            # YAML-overridable defaults
+│   ├── data.py              # JSONL I/O helpers
+│   ├── preprocessing.py     # text cleaning + candidate query
+│   ├── documents.py         # vacancy -> text + LangChain Documents
+│   ├── vector_store.py      # Chroma embedding + indexing
+│   ├── retrieval.py         # dense top-K retrieval
+│   ├── bm25_retrieval.py    # in-memory BM25 over vacancy docs
+│   ├── hybrid_retrieval.py  # RRF fusion of dense + BM25
+│   ├── reranking.py         # feature rows, LambdaRank, metrics
+│   ├── schema_features.py   # 82 tabular features from parsed schema
+│   ├── llm_logging.py       # JSONL audit log for LLM calls
+│   ├── pipeline.py          # end-to-end RecommendationPipeline
+│   ├── evaluation.py        # Recall@K + miss analysis helpers
 │   └── visualization.py
 ├── scripts/
 │   ├── setup_env.sh
 │   ├── check_env.py
 │   ├── build_index.py
 │   ├── run_retrieval.py
-│   └── evaluate.py
-├── tests/
+│   ├── score_rerank_experts.py  # LLM expert scoring + schema enrich
+│   ├── evaluate.py              # baseline + 3-variant LambdaRank
+│   ├── analyze_misses.py        # text miss-analysis report
+│   └── plot_miss_analysis.py    # PNG miss-analysis figures
+├── tests/                       # 81 pytest tests
 ├── data/
-│   ├── raw/
-│   ├── processed/
-│   └── chroma/
-├── outputs/
+│   ├── raw/                     # input JSONL (gitignored)
+│   ├── processed/               # generated feature rows (gitignored)
+│   └── chroma/                  # persistent dense index
+├── outputs/                     # generated plots + LambdaRank model
+├── config.yaml                  # path / model / sampling overrides
 ├── AGENTS.md
 ├── IMPROVEMENTS.md
 ├── requirements.txt
@@ -51,11 +61,22 @@ The current pipeline is preserved:
 Put these files into `data/raw/`:
 
 ```text
-data/raw/vacancy_conditioned_candidates.jsonl
-data/raw/vacancies_safe_ml_dataset_nozip.jsonl
+data/raw/results_5000_scores_acknowledged.jsonl   # candidates with id + text + ground-truth source_vacancy_id
+data/raw/candidates_with_schema.jsonl             # same candidates parsed into a structured schema (LLM-extracted fields)
+data/raw/vacancies_safe_ml_dataset_nozip.jsonl    # 10k vacancies with categorical metadata, salary, HTML body
 ```
 
-The notebook originally expected these files in the working directory. The structured version defaults to `data/raw/`, but all scripts accept CLI path overrides.
+`results_5000_scores_acknowledged.jsonl` is the canonical candidate text
+source consumed by retrieval / scoring scripts.
+`candidates_with_schema.jsonl` is an optional companion file used by the
+reranker — when present, [schema_features.py](src/sara_retrieve_rerank/schema_features.py)
+turns each row into 82 numeric tabular features (`cand_*`, `vac_*`,
+`pair_*`). Missing the schema file is tolerated; the reranker just
+trains without those columns.
+
+The notebook originally expected these files in the working directory.
+The structured version defaults to `data/raw/`, but all scripts accept
+CLI path overrides.
 
 ## Recommended local setup on macOS / VS Code
 
@@ -192,14 +213,13 @@ truth in every run):
 
 | Retriever | Output file | Recall@20 | Recall@100 |
 | --- | --- | ---: | ---: |
-| Dense, top-20 | `candidate_vacancy_matches_top20.jsonl` | 0.6683 (3,338 / 4,995) | n/a (max rank 20) |
 | Dense, top-100 | `candidate_vacancy_matches_top100.jsonl` | 0.6705 (3,348 / 4,995) | 0.7926 (3,959 / 4,995) |
 | Hybrid (dense + BM25), top-100 | `candidate_vacancy_matches_top100_hybrid.jsonl` | **0.7538** (3,765 / 4,995) | **0.8342** (4,167 / 4,995) |
 
 Hybrid retrieval (reciprocal rank fusion of the dense Chroma index and a
-BM25 index over the same vacancy documents) lifts Recall@20 from 0.6683
-to 0.7538 (**+8.6 percentage points**, +428 ground-truth vacancies pulled
-into the top-20).
+BM25 index over the same vacancy documents) lifts Recall@20 from 0.6705
+to 0.7538 (**+8.3 percentage points**, +417 ground-truth vacancies pulled
+into the top-20) and Recall@100 from 0.7926 to 0.8342 (+208).
 
 ```bash
 # Reproduce the hybrid recall numbers
@@ -231,34 +251,36 @@ The script reuses the same per-candidate bookkeeping as
 [scripts/analyze_misses.py](scripts/analyze_misses.py) (a plain-text
 companion) and saves one PNG per breakdown.
 
-**Specializations that are systematically harder to retrieve.** The
-share of misses where the ground-truth vacancy carries each specialization,
-side-by-side for the dense and hybrid runs:
+All charts below show **absolute miss counts** (not percentages) so the
+two runs can be compared directly — hybrid has a smaller miss set
+(1,230 vs 1,657), so percentage views skew the story.
+
+**Specializations that are systematically harder to retrieve.** Hybrid
+beats dense in every one of the top-10 hardest specializations:
 
 ![Missed specializations](outputs/miss_analysis/miss_specializations.png)
 
-**Regions of the missed vacancies.** Hybrid pulls in a lot more
-Russia-tagged vacancies (BM25 helps when CV / vacancy vocabulary
-overlaps strongly) but does relatively worse on US-based listings:
+**Regions of the missed vacancies.** The big win for hybrid is US-based
+roles — dense misses 338, hybrid misses only 84 (−254). Russia is the
+single bucket where hybrid is *worse*, but only by 62 missed candidates
+(727 → 789):
 
 ![Missed regions](outputs/miss_analysis/miss_regions.png)
 
-**Work format of the missed vacancies.** Misses skew toward remote
-vacancies in both retrievers because the CV corpus has heavy
-`"remote"` / `"english"` boilerplate which dilutes the signal:
+**Work format of the missed vacancies.** Hybrid reduces miss counts in
+every format bucket, with the largest absolute drop on remote roles:
 
 ![Missed work format](outputs/miss_analysis/miss_work_format.png)
 
-**Required English level on the missed vacancy.** Hybrid noticeably
-reduces the b2-English miss bucket — BM25 keyword anchors help when
-candidates list English proficiency explicitly:
+**Required English level on the missed vacancy.** Hybrid cuts B2-English
+misses from 664 → 257 (−407), a much bigger absolute lift than any
+other English-level bucket:
 
 ![Missed English level](outputs/miss_analysis/miss_english_level.png)
 
-**Locale signals in the *candidate* text of misses.** Bars are the share
-of missed candidates whose CV contains the signal token. Hybrid removes
-some of the "russian"-heavy long-tail misses but does not change the
-profile dramatically:
+**Locale signals in the *candidate* text of misses.** Hybrid removes
+absolute misses in every signal bucket except `russian` (590 → 632,
++42) — consistent with the regions chart:
 
 ![Locale signals in misses](outputs/miss_analysis/miss_locale_signals.png)
 
@@ -270,18 +292,18 @@ consistent with cold-start being a problem:
 
 #### Honest takeaways from miss analysis
 
-- Hybrid retrieval is a clear net win at Recall@20 (+8.6pp), but it
-  trades blind spots: US-based vacancies make up only 6.8% of hybrid
-  misses (vs 20.4% for dense), while Russia jumps from 43.9% → 64.2% of
-  the (now smaller) miss set. BM25 over-rewards Cyrillic / brand-token
-  matches.
-- Both retrievers struggle most on `product_design`, `qa_testing`,
+- Hybrid retrieval is a strict improvement across nearly every miss
+  bucket (regions, work format, English level, specializations). The
+  only category where it loses ground is Russia-tagged vacancies (727
+  → 789 missed) and CVs that mention "russian" (590 → 632). The
+  dense retriever has a strong embedding for Russian-language CVs that
+  BM25 partially crowds out.
+- The single biggest absolute lift is on B2-English vacancies (−407
+  missed) and US-based roles (−254 missed). BM25 keyword anchors help
+  when candidates list English proficiency or specific tools explicitly.
+- Both retrievers still struggle most on `product_design`, `qa_testing`,
   `marketing`, `backend_dev`, and `frontend_dev`. These are the buckets
   to target first with prompt engineering or query rewriting.
-- Required English ≥ B2 dominates the miss set in both runs. Candidates
-  who list English fluency explicitly are easier to retrieve; we should
-  enrich the candidate query with explicit English / locale tokens when
-  they appear in the schema.
 
 ## Reproducing the full hybrid + schema-feature pipeline
 
@@ -416,19 +438,13 @@ When `--train-lambdarank` is enabled, the script now also saves:
 - validation rows with `lambdarank_score` (`data/processed/lambdarank_validation_scored_top20.jsonl`)
 - fitted model (`outputs/lambdarank_model_top20.pkl`)
 
-It prints metrics for:
-- baseline cosine on all rows
-- baseline BM25 on all rows (when rerank rows carry `bm25_score`)
-- baseline weighted expert average on all rows
-- cosine, BM25 and weighted expert score on the LambdaRank validation split
-- `lambdarank_no_llm_expert` (cosine + BM25 + schema features) on the validation split
-- `lambdarank_no_schema` (cosine + BM25 + LLM expert scores) on the validation split
-- `lambdarank_score` (cosine + BM25 + LLM expert scores + schema features) on the validation split
-
-It also prints compact method-comparison tables (with `lambdarank_score`
-shown last as the main model) and saves comparison charts by default:
-- `outputs/rerank_method_comparison_all_rows.png`
-- `outputs/rerank_method_comparison_validation.png` (when `--train-lambdarank` is used)
+When `--train-lambdarank` is used, the script prints one validation
+comparison table with six rows — cosine, BM25, weighted LLM score,
+`lambdarank_no_llm_expert`, `lambdarank_no_schema`, and the main
+`lambdarank_score` (shown last) — and writes a comparison plot to
+`outputs/rerank_method_comparison_validation.png`. The "all rows" table
+was removed because it was a duplicate of the validation row without
+adding information.
 
 ### Schema-based reranker features
 
@@ -483,54 +499,50 @@ Dataset summary:
 | Train rows per group | 5.78 |
 | Validation rows per group | 20.00 |
 
-All rows comparison (baselines only — LambdaRank is trained / evaluated
-on the validation split below):
-
-| Method | Recall@1 | NDCG@1 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Δ NDCG@10 vs cosine |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cosine_similarity` | 0.6949 | 0.6949 | 0.9418 | 0.8278 | 0.9817 | 0.8411 | +0.0000 |
-| `weighted_llm_score` | 0.5053 | 0.5053 | 0.9415 | 0.7423 | 0.9877 | 0.7576 | -0.0834 |
-
 Validation comparison (same split used for LambdaRank model validation,
 with **`lambdarank_score` shown last as the main model**):
 
 | Method | Recall@1 | NDCG@1 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Δ NDCG@10 vs cosine |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `cosine_similarity` | 0.5517 | 0.5517 | 0.7901 | 0.6830 | 0.9085 | 0.7206 | +0.0000 |
+| `bm25_score` | 0.8456 | 0.8456 | 0.9490 | 0.9059 | 0.9700 | 0.9126 | +0.1920 |
 | `weighted_llm_score` | 0.2729 | 0.2729 | 0.7256 | 0.5035 | 0.9385 | 0.5735 | -0.1471 |
-| `lambdarank_no_llm_expert` | 0.8606 | 0.8606 | 0.9805 | 0.9291 | 0.9985 | 0.9351 | +0.2145 |
-| `lambdarank_no_schema` | 0.6027 | 0.6027 | 0.9175 | 0.7683 | 0.9790 | 0.7884 | +0.0677 |
-| **`lambdarank_score`** | **0.8591** | **0.8591** | **0.9880** | **0.9327** | **0.9985** | **0.9362** | **+0.2156** |
+| `lambdarank_no_llm_expert` | 0.8906 | 0.8906 | 0.9910 | 0.9494 | 1.0000 | 0.9524 | +0.2318 |
+| `lambdarank_no_schema` | 0.7271 | 0.7271 | 0.9430 | 0.8444 | 0.9850 | 0.8584 | +0.1378 |
+| **`lambdarank_score`** | **0.8891** | **0.8891** | **0.9925** | **0.9506** | **0.9985** | **0.9527** | **+0.2321** |
 
 Key takeaways (feature ablation):
-- **Schema features carry most of the lift.** The `lambdarank_no_llm_expert`
-  variant (cosine + schema features only — no LLM expert scores) gets to
-  `ndcg@10 = 0.9351`, almost the entire +0.2156 jump from cosine to the
-  full model.
-- **LLM expert scores alone are weaker.** `lambdarank_no_schema`
-  (cosine + LLM expert scores, no schema) lifts cosine by only +0.0677
-  ndcg@10. The LLM features still help in combination with schema
-  features — the full model is +0.0011 ndcg@10 above schema-only — but
-  the marginal value is small once schema features are in.
+- **BM25 alone is a startlingly strong baseline.** Ranking the top-20
+  retrieval pool by raw `bm25_score` already gets `ndcg@10 = 0.9126`
+  (+0.1920 vs cosine). Most of the lift the LambdaRank model gives
+  comes from this feature.
+- **Schema features add another +0.04 on top of cosine + BM25.**
+  `lambdarank_no_llm_expert` (cosine + BM25 + 82 schema features) reaches
+  `ndcg@10 = 0.9524`, basically tied with the full model.
+- **LLM expert scores are a weak signal here.** `lambdarank_no_schema`
+  (cosine + BM25 + LLM expert scores, no schema) scores `ndcg@10 = 0.8584`
+  — worse than BM25 alone. The five-dimensional expert prompt is noisy
+  enough that LightGBM cannot extract much from it on this training set
+  size; once schema features are in, adding LLM scores moves the metric
+  by only +0.0003 ndcg@10.
 - **Cold-start funnel.** Hybrid retrieval finds the true vacancy in
   top-20 for ~75% of labeled candidates. On the reranker validation
-  split (top-20 hit groups), the full `lambdarank_score` places the true
-  vacancy at rank 1 in **85.9%** of cases and within top-10 in **99.9%**
-  of cases.
+  split (top-20 hit groups), the full `lambdarank_score` places the
+  true vacancy at rank 1 in **88.9%** of cases and within top-10 in
+  **99.9%** of cases.
 
 Saved artifacts:
 - `data/processed/lambdarank_train_rows_top20.jsonl`
 - `data/processed/lambdarank_validation_rows_top20.jsonl`
 - `data/processed/lambdarank_validation_scored_top20.jsonl` (carries
-  `cosine_similarity`, `weighted_llm_score`, `lambdarank_no_llm_expert`,
-  `lambdarank_no_schema`, `lambdarank_score` plus all 82 schema columns)
+  `cosine_similarity`, `bm25_score`, `weighted_llm_score`,
+  `lambdarank_no_llm_expert`, `lambdarank_no_schema`, `lambdarank_score`
+  plus all 82 schema columns)
 - `outputs/lambdarank_model_top20.pkl`
-- `outputs/rerank_method_comparison_all_rows.png`
 - `outputs/rerank_method_comparison_validation.png`
 
-Comparison plots:
+Validation comparison plot:
 
-![All rows comparison](outputs/rerank_method_comparison_all_rows.png)
 ![Validation comparison](outputs/rerank_method_comparison_validation.png)
 
 The reusable reranking helpers live in `src/sara_retrieve_rerank/reranking.py`.

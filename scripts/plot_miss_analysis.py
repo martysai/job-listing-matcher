@@ -272,7 +272,12 @@ def plot_miss_breakdown(
     output_path: Path,
     top_n: int | None,
 ) -> None:
-    """Horizontal bar chart comparing miss-set frequencies for a given field."""
+    """Horizontal bar chart of absolute miss counts per category, per run.
+
+    Percentages can be misleading when the two miss sets have very
+    different sizes (e.g. dense misses are 1657 vs hybrid 1230) — raw
+    counts make the absolute-improvement story easier to read.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -304,25 +309,24 @@ def plot_miss_breakdown(
     y_positions = list(range(n_keys))
     for run_index, run in enumerate(runs):
         counter = run["field_counters"][field]
-        resolvable = max(run["resolvable_misses"], 1)
-        fractions = [counter.get(key, 0) / resolvable for key in keys]
+        counts = [counter.get(key, 0) for key in keys]
         offsets = [
             position + (run_index - (n_runs - 1) / 2) * bar_height for position in y_positions
         ]
         bars = ax.barh(
             offsets,
-            fractions,
+            counts,
             height=bar_height,
             label=f"{run['label']} (miss n={run['resolvable_misses']})",
             color=palette[run_index % len(palette)],
         )
-        for bar, frac in zip(bars, fractions):
-            if frac <= 0:
+        for bar, count in zip(bars, counts):
+            if count <= 0:
                 continue
             ax.text(
-                bar.get_width() + 0.003,
+                bar.get_width() + 1,
                 bar.get_y() + bar.get_height() / 2,
-                f"{frac:.1%}",
+                f"{count}",
                 va="center",
                 fontsize=8,
             )
@@ -330,7 +334,7 @@ def plot_miss_breakdown(
     ax.set_yticks(y_positions)
     ax.set_yticklabels(keys)
     ax.invert_yaxis()
-    ax.set_xlabel("Share of resolvable misses")
+    ax.set_xlabel("# missed candidates")
     ax.set_title(title)
     ax.grid(axis="x", alpha=0.2)
     ax.legend(loc="lower right")
@@ -354,22 +358,32 @@ def plot_locale_signals(runs: list[dict], output_path: Path) -> None:
 
     for run_index, run in enumerate(runs):
         counter = run["locale_counter"]
-        total = max(run["misses"], 1)
-        fractions = [counter.get(signal, 0) / total for signal in signals]
+        counts = [counter.get(signal, 0) for signal in signals]
         offsets = [
             position + (run_index - (n_runs - 1) / 2) * bar_width for position in positions
         ]
-        ax.bar(
+        bars = ax.bar(
             offsets,
-            fractions,
+            counts,
             width=bar_width,
             label=f"{run['label']} (miss n={run['misses']})",
             color=palette[run_index % len(palette)],
         )
+        for bar, count in zip(bars, counts):
+            if count <= 0:
+                continue
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                f"{count}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
 
     ax.set_xticks(positions)
     ax.set_xticklabels(signals)
-    ax.set_ylabel("Share of misses with signal in candidate text")
+    ax.set_ylabel("# missed candidates with signal in text")
     ax.set_title("Locale signals in miss-set candidate text")
     ax.grid(axis="y", alpha=0.2)
     ax.legend(loc="upper right")

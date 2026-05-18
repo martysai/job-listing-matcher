@@ -136,13 +136,3 @@ def test_order_method_metrics_keeps_unmentioned_methods_at_end(evaluate_module):
     assert list(ordered) == ["cosine_similarity", "lambdarank_score", "extra_metric"]
 
 
-def test_baseline_method_order_omits_bm25_when_not_present(evaluate_module):
-    rows = [{"cosine_similarity": 0.5, "general_score": 0.7}]
-    order = evaluate_module._baseline_method_order(rows, weighted_fields=["general_score"])
-    assert order == ["cosine_similarity", "weighted_llm_score"]
-
-
-def test_baseline_method_order_includes_bm25_when_present(evaluate_module):
-    rows = [{"cosine_similarity": 0.5, "bm25_score": 1.0, "general_score": 0.7}]
-    order = evaluate_module._baseline_method_order(rows, weighted_fields=["general_score"])
-    assert order == ["cosine_similarity", "bm25_score", "weighted_llm_score"]

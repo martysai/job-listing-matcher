@@ -164,32 +164,19 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
             output_key="weighted_llm_score",
         )
 
-    all_rows_method_metrics: dict[str, dict[str, float | int]] = {}
-    method_order_all = _baseline_method_order(rows, weighted_fields=weighted_fields)
-    for method in method_order_all:
-        score_key = method
-        all_rows_method_metrics[method] = evaluate_ranking_rows(
-            weighted_rows_all,
-            score_key=score_key,
-            ks=args.rerank_ks,
-        )
-        _print_metrics(f"{method}.all_rows", all_rows_method_metrics[method])
-    _print_method_comparison_table(
-        title="method_comparison.all_rows",
-        method_metrics=all_rows_method_metrics,
-        ks=args.rerank_ks,
-        baseline_method="cosine_similarity",
-    )
-
     validation_method_metrics: dict[str, dict[str, float | int]] = {}
     if not args.train_lambdarank:
-        _write_comparison_plots(
-            base_output_path=Path(args.comparison_plot_path),
-            all_rows_method_metrics=all_rows_method_metrics,
-            validation_method_metrics=validation_method_metrics,
-            ks=args.rerank_ks,
-            disabled=args.disable_comparison_plot,
-        )
+        # Without training, just report cosine + (optionally) BM25 on all rows
+        # so callers can sanity-check retrieval features without LightGBM.
+        for method in ["cosine_similarity"] + (
+            [BM25_FEATURE_FIELD] if any(BM25_FEATURE_FIELD in row for row in rows) else []
+        ):
+            metrics = evaluate_ranking_rows(
+                weighted_rows_all,
+                score_key=method,
+                ks=args.rerank_ks,
+            )
+            _print_metrics(f"{method}.all_rows", metrics)
         return
 
     variants = _build_lambdarank_variants(
@@ -330,7 +317,6 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
     )
     _write_comparison_plots(
         base_output_path=Path(args.comparison_plot_path),
-        all_rows_method_metrics=all_rows_method_metrics,
         validation_method_metrics=ordered_validation_metrics,
         ks=args.rerank_ks,
         disabled=args.disable_comparison_plot,
@@ -374,21 +360,6 @@ def _ensure_schema_features(
         candidate_schema_by_id=candidate_schema_by_id,
         vacancies_by_id=vacancies_by_id,
     )
-
-
-def _baseline_method_order(rows: list[dict], *, weighted_fields: list[str]) -> list[str]:
-    """Return the columns used in the all-rows comparison table.
-
-    Order is intentional: cosine first as the retrieval baseline, then BM25
-    (when present), then the weighted LLM expert score. LambdaRank columns
-    are not included here because the all-rows view does not train models.
-    """
-    order = ["cosine_similarity"]
-    if any(BM25_FEATURE_FIELD in row for row in rows):
-        order.append(BM25_FEATURE_FIELD)
-    if weighted_fields:
-        order.append("weighted_llm_score")
-    return order
 
 
 def _build_lambdarank_variants(
@@ -546,30 +517,20 @@ def _print_split_diagnostics(*, train_rows: list[dict], validation_rows: list[di
 def _write_comparison_plots(
     *,
     base_output_path: Path,
-    all_rows_method_metrics: Mapping[str, Mapping[str, float | int]],
     validation_method_metrics: Mapping[str, Mapping[str, float | int]],
     ks: Sequence[int],
     disabled: bool,
 ) -> None:
-    if disabled:
+    if disabled or not validation_method_metrics:
         return
 
-    all_rows_path = _with_stem_suffix(base_output_path, "all_rows")
+    validation_path = _with_stem_suffix(base_output_path, "validation")
     _save_method_comparison_plot(
-        output_path=all_rows_path,
-        title="Method Comparison (All Rows)",
-        method_metrics=all_rows_method_metrics,
+        output_path=validation_path,
+        title="Method Comparison (Validation)",
+        method_metrics=validation_method_metrics,
         ks=ks,
     )
-
-    if validation_method_metrics:
-        validation_path = _with_stem_suffix(base_output_path, "validation")
-        _save_method_comparison_plot(
-            output_path=validation_path,
-            title="Method Comparison (Validation)",
-            method_metrics=validation_method_metrics,
-            ks=ks,
-        )
 
 
 def _with_stem_suffix(path: Path, suffix: str) -> Path:
