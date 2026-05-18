@@ -17,6 +17,7 @@ from sara_retrieve_rerank.config import (
     RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE,
 )
 from sara_retrieve_rerank.documents import vacancy_to_text
+from sara_retrieve_rerank.schema_features import SCHEMA_FEATURE_FIELDS
 
 DEFAULT_RERANK_KS = (1, 5, 10)
 DEFAULT_LLM_SCORE_FIELDS = (
@@ -34,6 +35,22 @@ DEFAULT_FEATURE_FIELDS_WITH_BM25 = (
     "cosine_similarity",
     "bm25_score",
 ) + DEFAULT_LLM_SCORE_FIELDS
+# Full feature set: dense + sparse + LLM experts + schema-based tabular
+# features. Used when rows are enriched with `SCHEMA_FEATURE_FIELDS` by
+# `schema_features.enrich_rows_with_schema_features`.
+DEFAULT_FEATURE_FIELDS_FULL = (
+    "cosine_similarity",
+    "bm25_score",
+) + DEFAULT_LLM_SCORE_FIELDS + SCHEMA_FEATURE_FIELDS
+# Variant without LLM expert columns; useful for ablation / feature
+# importance comparisons against the full set.
+DEFAULT_FEATURE_FIELDS_NO_LLM_EXPERT = (
+    "cosine_similarity",
+    "bm25_score",
+) + SCHEMA_FEATURE_FIELDS
+# Variant without schema features; mirrors `DEFAULT_FEATURE_FIELDS_WITH_BM25`
+# under a more descriptive name for the ablation tables.
+DEFAULT_FEATURE_FIELDS_NO_SCHEMA = DEFAULT_FEATURE_FIELDS_WITH_BM25
 SINGLE_PAIR_JSON_SCORE_PROMPT = """\
 You are an expert recruiter assistant scoring candidate-vacancy match quality.
 

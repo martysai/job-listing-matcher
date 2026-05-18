@@ -46,6 +46,9 @@ def _get_path(section: str, key: str, default: str) -> Path:
 DEFAULT_CANDIDATES_PATH = _get_path(
     "paths", "candidates", "data/raw/results_5000_scores_acknowledged.jsonl"
 )
+DEFAULT_CANDIDATES_SCHEMA_PATH = _get_path(
+    "paths", "candidates_schema", "data/raw/candidates_with_schema.jsonl"
+)
 DEFAULT_VACANCIES_PATH = _get_path(
     "paths", "vacancies", "data/raw/vacancies_safe_ml_dataset_nozip.jsonl"
 )
@@ -88,7 +91,7 @@ BATCH_SIZE = int(_get("retrieval", "batch_size", 2_000))
 DEFAULT_EVAL_KS = tuple(_get("retrieval", "eval_ks", (1, 5, 10, 20, 50, 100)))
 
 RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE = int(
-    _get("reranking", "train_max_negatives_per_candidate", 1)
+    _get("reranking", "train_max_negatives_per_candidate", 4)
 )
 RERANK_SCORING_VALIDATION_FRACTION = float(
     _get("reranking", "scoring_validation_fraction", 0.2)

@@ -13,6 +13,7 @@ import argparse
 from sara_retrieve_rerank.config import (
     BATCH_SIZE,
     DEFAULT_CANDIDATES_PATH,
+    DEFAULT_CANDIDATES_SCHEMA_PATH,
     DEFAULT_MATCHES_OUTPUT_PATH,
     DEFAULT_RERANK_FEATURES_OUTPUT_PATH,
     DEFAULT_VACANCIES_PATH,
@@ -28,12 +29,26 @@ from sara_retrieve_rerank.hybrid_retrieval import (
 )
 from sara_retrieve_rerank.retrieval import retrieve_all_matches
 from sara_retrieve_rerank.reranking import build_pair_feature_rows
+from sara_retrieve_rerank.schema_features import (
+    enrich_rows_with_schema_features,
+    load_candidate_schema_map,
+)
 from sara_retrieve_rerank.vector_store import create_vectorstore, index_documents
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run candidate-to-vacancy retrieval.")
     parser.add_argument("--candidates-path", default=str(DEFAULT_CANDIDATES_PATH))
+    parser.add_argument(
+        "--candidates-schema-path",
+        default=str(DEFAULT_CANDIDATES_SCHEMA_PATH),
+        help=(
+            "Path to candidates_with_schema.jsonl (LLM-parsed candidate fields). "
+            "When --feature-output-path is used, the saved feature rows are "
+            "enriched with schema-based tabular features for the reranker. "
+            "Missing file is tolerated."
+        ),
+    )
     parser.add_argument("--vacancies-path", default=str(DEFAULT_VACANCIES_PATH))
     parser.add_argument("--output-path", default=str(DEFAULT_MATCHES_OUTPUT_PATH))
     parser.add_argument(
@@ -160,6 +175,25 @@ def main() -> None:
 
     if args.feature_output_path:
         feature_rows = build_pair_feature_rows(candidates, matches)
+        candidate_schema_by_id = load_candidate_schema_map(args.candidates_schema_path)
+        if candidate_schema_by_id:
+            vacancies_by_id = {
+                str(vacancy.get("dataset_id") or vacancy.get("id")): vacancy
+                for vacancy in vacancies
+            }
+            feature_rows = enrich_rows_with_schema_features(
+                feature_rows,
+                candidate_schema_by_id=candidate_schema_by_id,
+                vacancies_by_id=vacancies_by_id,
+            )
+            print(
+                f"Enriched feature rows with schema features from {args.candidates_schema_path}"
+            )
+        else:
+            print(
+                f"No candidate schema found at {args.candidates_schema_path}; "
+                "skipping schema feature enrichment."
+            )
         write_jsonl(feature_rows, args.feature_output_path)
         print(f"Saved {len(feature_rows)} reranker feature rows to {args.feature_output_path}")
 

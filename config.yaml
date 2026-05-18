@@ -5,6 +5,7 @@
 
 paths:
   candidates: data/raw/results_5000_scores_acknowledged.jsonl
+  candidates_schema: data/raw/candidates_with_schema.jsonl
   vacancies: data/raw/vacancies_safe_ml_dataset_nozip.jsonl
   matches_output: data/processed/candidate_vacancy_matches_top20.jsonl
   rerank_features_output: data/processed/rerank_features_top20.jsonl
@@ -24,7 +25,7 @@ retrieval:
   eval_ks: [1, 5, 10, 20, 50, 100]
 
 reranking:
-  train_max_negatives_per_candidate: 1
+  train_max_negatives_per_candidate: 4
   validation_max_negatives_per_candidate: 19
   scoring_validation_fraction: 0.2
 

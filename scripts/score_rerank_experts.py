@@ -15,6 +15,7 @@ import argparse
 
 from sara_retrieve_rerank.config import (
     DEFAULT_CANDIDATES_PATH,
+    DEFAULT_CANDIDATES_SCHEMA_PATH,
     DEFAULT_MATCHES_OUTPUT_PATH,
     DEFAULT_RERANK_FEATURES_OUTPUT_PATH,
     DEFAULT_SCORED_RERANK_FEATURES_OUTPUT_PATH,
@@ -37,6 +38,10 @@ from sara_retrieve_rerank.reranking import (
     prepare_rows_for_llm_scoring,
     score_feature_rows_with_experts,
 )
+from sara_retrieve_rerank.schema_features import (
+    enrich_rows_with_schema_features,
+    load_candidate_schema_map,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features-path", default=str(DEFAULT_RERANK_FEATURES_OUTPUT_PATH))
     parser.add_argument("--matches-path", default=str(DEFAULT_MATCHES_OUTPUT_PATH))
     parser.add_argument("--candidates-path", default=str(DEFAULT_CANDIDATES_PATH))
+    parser.add_argument(
+        "--candidates-schema-path",
+        default=str(DEFAULT_CANDIDATES_SCHEMA_PATH),
+        help=(
+            "Path to candidates_with_schema.jsonl. When present, scored rows "
+            "are enriched with schema-based tabular reranker features."
+        ),
+    )
     parser.add_argument("--vacancies-path", default=str(DEFAULT_VACANCIES_PATH))
     parser.add_argument("--output-path", default=str(DEFAULT_SCORED_RERANK_FEATURES_OUTPUT_PATH))
     parser.add_argument("--provider", default=None)
@@ -94,6 +107,25 @@ def main() -> None:
         candidates=candidates,
     )
     vacancies = load_jsonl(args.vacancies_path)
+    candidate_schema_by_id = load_candidate_schema_map(args.candidates_schema_path)
+    if candidate_schema_by_id:
+        vacancies_by_id = {
+            str(vacancy.get("dataset_id") or vacancy.get("id")): vacancy
+            for vacancy in vacancies
+        }
+        rows = enrich_rows_with_schema_features(
+            rows,
+            candidate_schema_by_id=candidate_schema_by_id,
+            vacancies_by_id=vacancies_by_id,
+        )
+        print(
+            f"Enriched {len(rows)} feature rows with schema features "
+            f"from {args.candidates_schema_path}"
+        )
+    else:
+        print(
+            f"Schema features skipped: no candidate schema found at {args.candidates_schema_path}"
+        )
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
 
