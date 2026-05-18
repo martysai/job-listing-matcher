@@ -11,6 +11,14 @@ rank-bm25
 lightgbm
 pyyaml
 lxml
-beautifulsoup4
-matplotlib
+beautifulsoup4~=4.14.3
+matplotlib~=3.10.9
 pytest
+
+pydantic~=2.12.5
+langgraph~=1.2.0
+numpy~=2.4.4
+anthropic~=0.100.0
+python-dotenv~=1.2.2
+pandas~=3.0.3
+litellm~=1.83.14
