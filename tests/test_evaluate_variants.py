@@ -111,13 +111,11 @@ def test_build_lambdarank_variants_without_llm_experts(evaluate_module):
 
 def test_validation_method_order_places_main_last(evaluate_module):
     order = evaluate_module._validation_method_order(
-        include_bm25=True,
         include_weighted=True,
         ablation_variant_names=["lambdarank_no_schema", "lambdarank_no_llm_expert"],
     )
     assert order[0] == "cosine_similarity"
     assert order[-1] == "lambdarank_score"
-    assert "bm25_score" in order
     assert "weighted_llm_score" in order
     assert "lambdarank_no_schema" in order
     assert "lambdarank_no_llm_expert" in order

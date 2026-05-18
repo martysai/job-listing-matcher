@@ -308,10 +308,21 @@ consistent with cold-start being a problem:
 ## Reproducing the full hybrid + schema-feature pipeline
 
 These steps re-run retrieval, LLM expert scoring, and LambdaRank training
-end-to-end. The LambdaRank model is trained on hybrid (dense + BM25)
-retrieval and uses four feature groups: `cosine_similarity`, `bm25_score`,
-LLM expert scores, and schema-based tabular features parsed from
+end-to-end. Retrieval uses hybrid (dense + BM25 fusion); the LambdaRank
+reranker uses three feature groups: `cosine_similarity`, LLM expert
+scores, and schema-based tabular features parsed from
 `data/raw/candidates_with_schema.jsonl`.
+
+> Note on `bm25_score`: hybrid retrieval emits `bm25_score` on every
+> match row, but it is **not** used as a LambdaRank feature on this
+> dataset. The synthetic candidates were generated *conditioned on*
+> their source vacancy, so BM25 captures a direct keyword leak from the
+> data-generation process and dominates the ranking on its own. Feeding
+> it into the model muddies the schema-vs-LLM ablation; we keep BM25
+> for retrieval-stage recall lift and rely on the schema features for
+> reranking. Re-enabling BM25 as a reranker feature is still supported
+> via `evaluate.py --use-bm25-feature` for anyone who wants to inspect
+> the effect.
 
 ```bash
 # 1) Hybrid retrieval (dense + BM25 via reciprocal rank fusion).
@@ -332,12 +343,11 @@ python scripts/score_rerank_experts.py \
   --candidates-schema-path data/raw/candidates_with_schema.jsonl
 
 # 3) Train all three LambdaRank variants and print the comparison table.
-#    The output table shows cosine_similarity, bm25_score,
-#    weighted_llm_score, lambdarank_no_llm_expert, lambdarank_no_schema,
-#    and finally lambdarank_score (main model, listed last).
+#    The output table shows cosine_similarity, weighted_llm_score,
+#    lambdarank_no_llm_expert, lambdarank_no_schema, and finally
+#    lambdarank_score (main model, listed last).
 python scripts/evaluate.py \
   --rerank-features-path data/processed/rerank_features_scored_top20.jsonl \
-  --use-bm25-feature \
   --train-lambdarank
 ```
 
@@ -439,7 +449,7 @@ When `--train-lambdarank` is enabled, the script now also saves:
 - fitted model (`outputs/lambdarank_model_top20.pkl`)
 
 When `--train-lambdarank` is used, the script prints one validation
-comparison table with six rows — cosine, BM25, weighted LLM score,
+comparison table with five rows — cosine, weighted LLM score,
 `lambdarank_no_llm_expert`, `lambdarank_no_schema`, and the main
 `lambdarank_score` (shown last) — and writes a comparison plot to
 `outputs/rerank_method_comparison_validation.png`. The "all rows" table
@@ -481,7 +491,6 @@ Command:
 ```bash
 python scripts/evaluate.py \
   --rerank-features-path data/processed/rerank_features_scored_top20.jsonl \
-  --use-bm25-feature \
   --train-lambdarank
 ```
 
@@ -505,53 +514,33 @@ with **`lambdarank_score` shown last as the main model**):
 | Method | Recall@1 | NDCG@1 | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Δ NDCG@10 vs cosine |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `cosine_similarity` | 0.5517 | 0.5517 | 0.7901 | 0.6830 | 0.9085 | 0.7206 | +0.0000 |
-| `bm25_score` | 0.8456 | 0.8456 | 0.9490 | 0.9059 | 0.9700 | 0.9126 | +0.1920 |
 | `weighted_llm_score` | 0.2729 | 0.2729 | 0.7256 | 0.5035 | 0.9385 | 0.5735 | -0.1471 |
-| `lambdarank_no_llm_expert` | 0.8846 | 0.8846 | 0.9655 | 0.9292 | 0.9805 | 0.9343 | +0.2137 |
-| `lambdarank_no_schema` | 0.8711 | 0.8711 | 0.9595 | 0.9218 | 0.9790 | 0.9284 | +0.2078 |
-| **`lambdarank_score`** | **0.8681** | **0.8681** | **0.9580** | **0.9189** | **0.9760** | **0.9247** | **+0.2041** |
-
-> **About `bm25_score`** — this is the raw BM25 ranking signal added as
-> a baseline; the LambdaRank training pipeline now uses it as
-> `init_score`, so every LambdaRank variant learns the *residual* on
-> top of BM25 instead of trying to rediscover it from scratch. Without
-> this init-score trick (plus strong regularization: `num_leaves=7`,
-> `min_child_samples=50`, early stopping), the small train-group size
-> (5–6 candidates/group vs 20 in validation) was letting noisy LLM
-> features drag the model below raw BM25. See
-> [src/sara_retrieve_rerank/reranking.py:train_lambdarank](src/sara_retrieve_rerank/reranking.py).
+| `lambdarank_no_llm_expert` | 0.8606 | 0.8606 | 0.9805 | 0.9291 | 0.9985 | 0.9351 | +0.2145 |
+| `lambdarank_no_schema` | 0.6027 | 0.6027 | 0.9175 | 0.7683 | 0.9790 | 0.7884 | +0.0677 |
+| **`lambdarank_score`** | **0.8591** | **0.8591** | **0.9880** | **0.9327** | **0.9985** | **0.9362** | **+0.2156** |
 
 Key takeaways (feature ablation):
-- **BM25 alone is the strongest single feature** at `ndcg@10 = 0.9126`
-  (+0.1920 vs cosine). Most of the LambdaRank lift comes from this
-  signal, which is why we feed it in as `init_score` and let the model
-  learn the residual.
-- **Schema features add another +0.02 NDCG@10 on top of cosine + BM25.**
-  `lambdarank_no_llm_expert` (cosine + BM25 + 82 schema features) is
-  the best ablation at `ndcg@10 = 0.9343`, slightly *better* than the
-  full model.
-- **LLM expert scores add +0.016 NDCG@10 on top of cosine + BM25 alone.**
-  `lambdarank_no_schema` (cosine + BM25 + 5 LLM expert scores) reaches
-  `ndcg@10 = 0.9284` — a small gain over BM25 baseline.
-- **The full model is slightly worse than schema-only.** Stacking LLM
-  expert scores on top of schema features moves NDCG@10 from 0.9343 to
-  0.9247 (-0.0096). The 5 LLM scores are noisier than the 82 schema
-  features and dilute the schema signal. We'd drop the LLM-expert
-  scoring step from production unless they become cheaper / better
-  calibrated.
+- **Schema features carry most of the lift.** `lambdarank_no_llm_expert`
+  (cosine + 82 schema features, no LLM scores) reaches NDCG@10 =
+  **0.9351**, almost the entire +0.2156 jump from cosine to the full
+  model.
+- **LLM expert scores alone are a weaker signal.** `lambdarank_no_schema`
+  (cosine + 5 LLM expert scores) only gets to NDCG@10 = 0.7884
+  (+0.0677). They still help in combination with schema features — the
+  full model is +0.0011 NDCG@10 above schema-only — but the marginal
+  value is small once schema features are in.
 - **Cold-start funnel.** Hybrid retrieval finds the true vacancy in
   top-20 for ~75% of labeled candidates. On the reranker validation
-  split (top-20 hit groups), `lambdarank_no_llm_expert` places the true
-  vacancy at rank 1 in **88.5%** of cases and within top-10 in **98.1%**
-  of cases.
+  split (top-20 hit groups), the full `lambdarank_score` places the
+  true vacancy at rank 1 in **85.9%** of cases and within top-10 in
+  **99.9%** of cases.
 
 Saved artifacts:
 - `data/processed/lambdarank_train_rows_top20.jsonl`
 - `data/processed/lambdarank_validation_rows_top20.jsonl`
 - `data/processed/lambdarank_validation_scored_top20.jsonl` (carries
-  `cosine_similarity`, `bm25_score`, `weighted_llm_score`,
-  `lambdarank_no_llm_expert`, `lambdarank_no_schema`, `lambdarank_score`
-  plus all 82 schema columns)
+  `cosine_similarity`, `weighted_llm_score`, `lambdarank_no_llm_expert`,
+  `lambdarank_no_schema`, `lambdarank_score` plus all 82 schema columns)
 - `outputs/lambdarank_model_top20.pkl`
 - `outputs/rerank_method_comparison_validation.png`
 

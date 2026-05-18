@@ -166,17 +166,14 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
 
     validation_method_metrics: dict[str, dict[str, float | int]] = {}
     if not args.train_lambdarank:
-        # Without training, just report cosine + (optionally) BM25 on all rows
-        # so callers can sanity-check retrieval features without LightGBM.
-        for method in ["cosine_similarity"] + (
-            [BM25_FEATURE_FIELD] if any(BM25_FEATURE_FIELD in row for row in rows) else []
-        ):
-            metrics = evaluate_ranking_rows(
-                weighted_rows_all,
-                score_key=method,
-                ks=args.rerank_ks,
-            )
-            _print_metrics(f"{method}.all_rows", metrics)
+        # Without training, just report the cosine baseline so callers can
+        # sanity-check retrieval features without LightGBM.
+        metrics = evaluate_ranking_rows(
+            weighted_rows_all,
+            score_key="cosine_similarity",
+            ks=args.rerank_ks,
+        )
+        _print_metrics("cosine_similarity.all_rows", metrics)
         return
 
     variants = _build_lambdarank_variants(
@@ -226,18 +223,6 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
         ks=args.rerank_ks,
     )
     _print_metrics("cosine_similarity.validation", validation_method_metrics["cosine_similarity"])
-
-    # BM25 baseline on the same split (if rows carry the column).
-    if any(BM25_FEATURE_FIELD in row for row in validation_rows):
-        validation_method_metrics[BM25_FEATURE_FIELD] = evaluate_ranking_rows(
-            validation_rows,
-            score_key=BM25_FEATURE_FIELD,
-            ks=args.rerank_ks,
-        )
-        _print_metrics(
-            f"{BM25_FEATURE_FIELD}.validation",
-            validation_method_metrics[BM25_FEATURE_FIELD],
-        )
 
     if weighted_fields:
         validation_method_metrics["weighted_llm_score"] = evaluate_ranking_rows(
@@ -292,7 +277,6 @@ def evaluate_rerank_feature_rows(args: argparse.Namespace) -> None:
     ordered_validation_metrics = _order_method_metrics(
         validation_method_metrics,
         preferred_order=_validation_method_order(
-            include_bm25=any(BM25_FEATURE_FIELD in row for row in validation_rows),
             include_weighted=bool(weighted_fields),
             ablation_variant_names=[
                 name for name in variants if name != main_variant_name
@@ -410,7 +394,6 @@ def _build_lambdarank_variants(
 
 def _validation_method_order(
     *,
-    include_bm25: bool,
     include_weighted: bool,
     ablation_variant_names: list[str],
 ) -> list[str]:
@@ -420,8 +403,6 @@ def _validation_method_order(
     main model anchors the right side of the table.
     """
     order: list[str] = ["cosine_similarity"]
-    if include_bm25:
-        order.append(BM25_FEATURE_FIELD)
     if include_weighted:
         order.append("weighted_llm_score")
     order.extend(ablation_variant_names)
