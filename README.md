@@ -507,29 +507,43 @@ with **`lambdarank_score` shown last as the main model**):
 | `cosine_similarity` | 0.5517 | 0.5517 | 0.7901 | 0.6830 | 0.9085 | 0.7206 | +0.0000 |
 | `bm25_score` | 0.8456 | 0.8456 | 0.9490 | 0.9059 | 0.9700 | 0.9126 | +0.1920 |
 | `weighted_llm_score` | 0.2729 | 0.2729 | 0.7256 | 0.5035 | 0.9385 | 0.5735 | -0.1471 |
-| `lambdarank_no_llm_expert` | 0.8906 | 0.8906 | 0.9910 | 0.9494 | 1.0000 | 0.9524 | +0.2318 |
-| `lambdarank_no_schema` | 0.7271 | 0.7271 | 0.9430 | 0.8444 | 0.9850 | 0.8584 | +0.1378 |
-| **`lambdarank_score`** | **0.8891** | **0.8891** | **0.9925** | **0.9506** | **0.9985** | **0.9527** | **+0.2321** |
+| `lambdarank_no_llm_expert` | 0.8846 | 0.8846 | 0.9655 | 0.9292 | 0.9805 | 0.9343 | +0.2137 |
+| `lambdarank_no_schema` | 0.8711 | 0.8711 | 0.9595 | 0.9218 | 0.9790 | 0.9284 | +0.2078 |
+| **`lambdarank_score`** | **0.8681** | **0.8681** | **0.9580** | **0.9189** | **0.9760** | **0.9247** | **+0.2041** |
+
+> **About `bm25_score`** — this is the raw BM25 ranking signal added as
+> a baseline; the LambdaRank training pipeline now uses it as
+> `init_score`, so every LambdaRank variant learns the *residual* on
+> top of BM25 instead of trying to rediscover it from scratch. Without
+> this init-score trick (plus strong regularization: `num_leaves=7`,
+> `min_child_samples=50`, early stopping), the small train-group size
+> (5–6 candidates/group vs 20 in validation) was letting noisy LLM
+> features drag the model below raw BM25. See
+> [src/sara_retrieve_rerank/reranking.py:train_lambdarank](src/sara_retrieve_rerank/reranking.py).
 
 Key takeaways (feature ablation):
-- **BM25 alone is a startlingly strong baseline.** Ranking the top-20
-  retrieval pool by raw `bm25_score` already gets `ndcg@10 = 0.9126`
-  (+0.1920 vs cosine). Most of the lift the LambdaRank model gives
-  comes from this feature.
-- **Schema features add another +0.04 on top of cosine + BM25.**
-  `lambdarank_no_llm_expert` (cosine + BM25 + 82 schema features) reaches
-  `ndcg@10 = 0.9524`, basically tied with the full model.
-- **LLM expert scores are a weak signal here.** `lambdarank_no_schema`
-  (cosine + BM25 + LLM expert scores, no schema) scores `ndcg@10 = 0.8584`
-  — worse than BM25 alone. The five-dimensional expert prompt is noisy
-  enough that LightGBM cannot extract much from it on this training set
-  size; once schema features are in, adding LLM scores moves the metric
-  by only +0.0003 ndcg@10.
+- **BM25 alone is the strongest single feature** at `ndcg@10 = 0.9126`
+  (+0.1920 vs cosine). Most of the LambdaRank lift comes from this
+  signal, which is why we feed it in as `init_score` and let the model
+  learn the residual.
+- **Schema features add another +0.02 NDCG@10 on top of cosine + BM25.**
+  `lambdarank_no_llm_expert` (cosine + BM25 + 82 schema features) is
+  the best ablation at `ndcg@10 = 0.9343`, slightly *better* than the
+  full model.
+- **LLM expert scores add +0.016 NDCG@10 on top of cosine + BM25 alone.**
+  `lambdarank_no_schema` (cosine + BM25 + 5 LLM expert scores) reaches
+  `ndcg@10 = 0.9284` — a small gain over BM25 baseline.
+- **The full model is slightly worse than schema-only.** Stacking LLM
+  expert scores on top of schema features moves NDCG@10 from 0.9343 to
+  0.9247 (-0.0096). The 5 LLM scores are noisier than the 82 schema
+  features and dilute the schema signal. We'd drop the LLM-expert
+  scoring step from production unless they become cheaper / better
+  calibrated.
 - **Cold-start funnel.** Hybrid retrieval finds the true vacancy in
   top-20 for ~75% of labeled candidates. On the reranker validation
-  split (top-20 hit groups), the full `lambdarank_score` places the
-  true vacancy at rank 1 in **88.9%** of cases and within top-10 in
-  **99.9%** of cases.
+  split (top-20 hit groups), `lambdarank_no_llm_expert` places the true
+  vacancy at rank 1 in **88.5%** of cases and within top-10 in **98.1%**
+  of cases.
 
 Saved artifacts:
 - `data/processed/lambdarank_train_rows_top20.jsonl`

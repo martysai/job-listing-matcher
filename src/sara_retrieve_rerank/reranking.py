@@ -713,10 +713,33 @@ def train_lambdarank(
     seed: int = 42,
     train_max_negatives_per_candidate: int | None = RERANK_TRAIN_MAX_NEGATIVES_PER_CANDIDATE,
     params: Mapping[str, Any] | None = None,
+    early_stopping_rounds: int | None = 100,
+    init_score_field: str | None = "bm25_score",
 ):
-    """Train a LightGBM LambdaRank model on grouped reranking rows."""
+    """Train a LightGBM LambdaRank model on grouped reranking rows.
+
+    Two robustness defaults that matter when the training set is small
+    (this project has ~5 candidates per train group while validation has
+    20, so the model overfits trivially with default hyperparameters):
+
+    * **Residual learning on top of BM25.** When `init_score_field` is
+      provided and that column is one of the input features, the model
+      is initialized with those values, so it learns the *correction* on
+      top of BM25 instead of trying to rediscover BM25 from scratch.
+      Without this, noisy LLM expert features dragged the model below
+      raw `bm25_score` on this dataset.
+    * **Early stopping on the validation NDCG with strong regularization.**
+      The default config (`num_leaves=7`, `learning_rate=0.05`,
+      `n_estimators=2000`, `min_child_samples=50`, `reg_alpha=reg_lambda=1.0`,
+      `early_stopping_rounds=100`) keeps the trees shallow and stops
+      training when the validation curve stops improving.
+
+    `score_rows_with_model` re-adds the init-score column when it sees
+    `model._sara_init_score_field` set, so callers do not need to know
+    about this detail.
+    """
     try:
-        from lightgbm import LGBMRanker
+        from lightgbm import LGBMRanker, early_stopping
     except ImportError as exc:
         raise ImportError(
             "LightGBM is required for LambdaRank training. Install it with "
@@ -748,7 +771,12 @@ def train_lambdarank(
         "objective": "lambdarank",
         "metric": "ndcg",
         "random_state": seed,
-        "n_estimators": 100,
+        "n_estimators": 2000,
+        "learning_rate": 0.05,
+        "num_leaves": 7,
+        "min_child_samples": 50,
+        "reg_alpha": 1.0,
+        "reg_lambda": 1.0,
         "verbosity": -1,
     }
     if params:
@@ -774,11 +802,26 @@ def train_lambdarank(
         pass
 
     fit_kwargs: dict[str, Any] = {"group": train_group}
+    init_col_index: int | None = None
+    if init_score_field and init_score_field in feature_fields:
+        init_col_index = list(feature_fields).index(init_score_field)
+        fit_kwargs["init_score"] = train_matrix[:, init_col_index]
     if validation_rows:
         fit_kwargs["eval_set"] = [(validation_matrix, validation_labels)]
         fit_kwargs["eval_group"] = [validation_group]
+        if init_col_index is not None:
+            fit_kwargs["eval_init_score"] = [validation_matrix[:, init_col_index]]
+        if early_stopping_rounds and early_stopping_rounds > 0:
+            fit_kwargs["callbacks"] = [
+                early_stopping(stopping_rounds=early_stopping_rounds, verbose=False)
+            ]
 
     model.fit(train_matrix, train_labels, **fit_kwargs)
+    if init_col_index is not None:
+        # Stash the init-score column so `score_rows_with_model` can re-add
+        # it at inference time without the caller having to know about
+        # residual-mode training.
+        model._sara_init_score_field = init_score_field
     return model, train_rows, validation_rows
 
 
@@ -898,7 +941,13 @@ def score_rows_with_model(
     feature_fields: Sequence[str] = DEFAULT_FEATURE_FIELDS,
     output_key: str = "lambdarank_score",
 ) -> list[dict[str, Any]]:
-    """Add model predictions to reranking rows."""
+    """Add model predictions to reranking rows.
+
+    If the model was trained with `init_score` from a feature column
+    (see `train_lambdarank(init_score_field=...)`), that column is
+    re-added to the raw predictions so the returned score matches what
+    LightGBM optimized during training.
+    """
     matrix = [[float(row.get(field) or 0.0) for field in feature_fields] for row in rows]
     if matrix:
         try:
@@ -919,10 +968,18 @@ def score_rows_with_model(
     else:
         predictions = []
 
+    init_field = getattr(model, "_sara_init_score_field", None)
+    init_col_index: int | None = None
+    if init_field and init_field in feature_fields:
+        init_col_index = list(feature_fields).index(init_field)
+
     scored_rows: list[dict[str, Any]] = []
-    for row, prediction in zip(rows, predictions, strict=True):
+    for row, prediction, row_features in zip(rows, predictions, matrix, strict=True):
         scored_row = dict(row)
-        scored_row[output_key] = float(prediction)
+        final_score = float(prediction)
+        if init_col_index is not None:
+            final_score += float(row_features[init_col_index])
+        scored_row[output_key] = final_score
         scored_rows.append(scored_row)
 
     return scored_rows
