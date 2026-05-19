@@ -29,7 +29,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from sara_retrieve_rerank.adzuna.config import EXTRACTOR_MODEL
+from sara_retrieve_rerank.adzuna.config import EXTRACTOR_MODEL, MAX_VACANCIES_PER_RUN
 from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
 from sara_retrieve_rerank.adzuna.extractor import extract_vacancy_fields_batch
 from sara_retrieve_rerank.adzuna.indexer import partial_reindex, vectorize_vacancies
@@ -97,12 +97,13 @@ def build_tools(ctx: RefreshContext) -> list:
             ]
             log.info("scrape_vacancies: broadened — location filter removed")
 
-        raw = asyncio.run(scrape_adzuna_batch(queries))
+        raw = asyncio.run(scrape_adzuna_batch(queries, max_vacancies=MAX_VACANCIES_PER_RUN))
         ctx.raw_vacancies = raw
 
         mode = "FALLBACK" if ctx.counter.is_cold() else "COUNTER-DRIVEN"
+        limit_msg = f"  (limit: {MAX_VACANCIES_PER_RUN})" if MAX_VACANCIES_PER_RUN else ""
         return (
-            f"Scraped {len(raw)} unique vacancies.  "
+            f"Scraped {len(raw)} unique vacancies {limit_msg}.  "
             f"Mode: {mode}.  Queries executed: {len(queries)}."
         )
 
@@ -122,9 +123,7 @@ def build_tools(ctx: RefreshContext) -> list:
             return "ERROR: no scraped vacancies in context. Call scrape_vacancies first."
 
         partials  = [adzuna_to_vacancy_dict(v) for v in ctx.raw_vacancies]
-        extracted = extract_vacancy_fields_batch(
-            partials, model=ctx.extractor_model
-        )
+        extracted = extract_vacancy_fields_batch(partials, model=ctx.extractor_model)
         ctx.processed_vacancies = [
             merge_extracted(p, e) for p, e in zip(partials, extracted)
         ]

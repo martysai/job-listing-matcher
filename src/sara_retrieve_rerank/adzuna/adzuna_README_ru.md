@@ -115,6 +115,7 @@ ADZUNA_VACANCY_TTL_DAYS=14              # срок хранения ваканс
 # ── LLM для оркестрирующего агента ───────────────────────────────────────────
 VACANCY_AGENT_LLM_MODEL=mistral/mistral-large-latest
 MISTRAL_API_KEY=ваш_ключ                 # или OPENAI_API_KEY / ANTHROPIC_API_KEY
+LITELLM_RETRY_AFTER_WAIT_TIME=2          # базовая пауза между retry на 429 (сек)
 
 # ── LLM для SGR-экстракции полей вакансий ────────────────────────────────────
 VACANCY_EXTRACTOR_LLM_MODEL=mistral/mistral-small-latest

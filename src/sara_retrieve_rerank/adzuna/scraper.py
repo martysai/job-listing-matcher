@@ -41,8 +41,16 @@ async def scrape_adzuna_batch(
     queries: list[AdzunaQuery],
     country: str = ADZUNA_COUNTRY,
     delay_seconds: float = SCRAPE_DELAY_SECONDS,
+    max_vacancies: int | None = None,
 ) -> list[dict]:
     """Execute all queries sequentially and return deduplicated raw vacancy dicts.
+
+    Parameters
+    ----------
+    max_vacancies:
+        Stop scraping after this many unique vacancies have been collected.
+        None (default) means no limit — run all queries to completion.
+        Set via ADZUNA_MAX_VACANCIES env var (see config.py).
 
     Skips queries that return 0 results immediately (saves API quota).
     Continues on HTTP errors and timeouts, logging a warning per failure.
@@ -56,8 +64,27 @@ async def scrape_adzuna_batch(
     seen_ids: set[str] = set()
     log = logging.getLogger("sara.agent")
 
+    n_ok = 0  # queries with ≥1 result
+    n_empty = 0  # queries with 0 results
+    n_error = 0  # HTTP errors / timeouts
+
+    limit_msg = f"  limit={max_vacancies}" if max_vacancies else "  no limit"
+    log.info(
+        "Adzuna scrape started — %d queries planned  delay=%.1fs%s",
+        len(queries), delay_seconds, limit_msg,
+    )
+
     async with aiohttp.ClientSession() as session:
         for i, query in enumerate(queries):
+
+            # Stop early if vacancy limit reached
+            if max_vacancies and len(all_vacancies) >= max_vacancies:
+                log.info(
+                    "Vacancy limit reached (%d) — stopping scrape after %d/%d queries",
+                    max_vacancies, i, len(queries),
+                )
+                break
+
             url    = ADZUNA_BASE_URL.format(country=country, page=1)
             params = {**query.to_params(), "app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY}
 
@@ -66,25 +93,51 @@ async def scrape_adzuna_batch(
                     url, params=params, timeout=aiohttp.ClientTimeout(total=15)
                 ) as resp:
                     if resp.status != 200:
-                        log.warning("Query %d HTTP %d — skip", i, resp.status)
+                        # Log the actual URL (without api_key) and response body
+                        # so the root cause of 404/401/403 can be diagnosed.
+                        safe_url = str(resp.url).replace(ADZUNA_APP_KEY, "***")
+                        body = await resp.text()
+                        log.warning(
+                            "Query %d HTTP %d — skip\n  url: %s\n  body: %s",
+                            i, resp.status, safe_url, body[:300],
+                        )
+                        n_error += 1
                         continue
+
                     results = (await resp.json()).get("results", [])
                     if not results:
+                        n_empty += 1
                         continue
+
                     new = [v for v in results if str(v["id"]) not in seen_ids]
+
+                    # Trim to stay within limit
+                    if max_vacancies:
+                        remaining = max_vacancies - len(all_vacancies)
+                        new = new[:remaining]
+
                     seen_ids.update(str(v["id"]) for v in new)
                     all_vacancies.extend(new)
+                    n_ok += 1
                     log.info(
-                        "Query %3d +%4d  (total %d)  what=%r  where=%r",
-                        i, len(new), len(all_vacancies), query.what, query.where,
+                        "[%d/%d] +%3d new  total=%d  what=%r  where=%r  category=%r",
+                        i + 1, len(queries), len(new), len(all_vacancies),
+                        query.what, query.where, query.category,
                     )
+
             except asyncio.TimeoutError:
                 log.warning("Query %d: timeout — skip", i)
+                n_error += 1
             except Exception as exc:  # noqa: BLE001
                 log.warning("Query %d: %s — skip", i, exc)
+                n_error += 1
 
             await asyncio.sleep(delay_seconds)
 
+    log.info(
+        "Adzuna scrape finished — vacancies: %d  queries: %d ok / %d empty / %d error",
+        len(all_vacancies), n_ok, n_empty, n_error,
+    )
     return all_vacancies
 
 
@@ -102,7 +155,8 @@ def adzuna_to_vacancy_dict(raw: dict) -> dict:
     """
     contract = raw.get("contract_type", "")
     loc      = raw.get("location") or {}
-    area     = loc.get("area") or {}
+    area_raw = loc.get("area") or []
+    regions = [a for a in area_raw if isinstance(a, str)] if isinstance(area_raw, list) else []
 
     return {
         "dataset_id":      str(raw["id"]),
@@ -120,8 +174,8 @@ def adzuna_to_vacancy_dict(raw: dict) -> dict:
         "specializations": [],    # → extractor
         "company_domains": [],    # → extractor
         "title_aliases":   [],
-        "cities":   [loc.get("display_name")]  if loc.get("display_name")  else [],
-        "regions":  [area.get("display_name")] if area.get("display_name") else [],
+        "cities":  [loc["display_name"]] if loc.get("display_name") else [],
+        "regions": regions,
         "tldr_sanitized":  clean_html(raw.get("description", "")),
         # ── reranker salary features (schema_features._to_usd) ────────────────
         "salary": {

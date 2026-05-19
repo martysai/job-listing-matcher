@@ -169,8 +169,16 @@ def extract_vacancy_fields_batch(
     logged_invoke = _make_logged_invoke(logger)
     results: list[VacancyExtracted] = []
     agent_log = logging.getLogger("sara.agent")
+    total = len(vacancy_dicts)
+    n_ok = 0
+    n_failed = 0
 
-    for vacancy in vacancy_dicts:
+    agent_log.info(
+        "Field extraction started — %d vacancies  model=%s  delay=%.1fs",
+        total, model, delay_seconds,
+    )
+
+    for idx, vacancy in enumerate(vacancy_dicts, start=1):
         vacancy_id = str(vacancy.get("dataset_id", ""))
         llm_config = _LLMConfig(model=model, vacancy_id=vacancy_id)
         prompt     = _build_prompt(vacancy)
@@ -180,13 +188,30 @@ def extract_vacancy_fields_batch(
             extracted = VacancyExtracted.model_validate_json(
                 response.choices[0].message.content
             )
+            n_ok += 1
+            agent_log.debug("[%d/%d] extracted  id=%s", idx, total, vacancy_id)
+
         except Exception as exc:  # noqa: BLE001
-            agent_log.warning(
-                "Extraction failed for %s: %s — using empty fields", vacancy_id, exc
-            )
+            n_failed += 1
+            is_rate_limit = "429" in str(exc) or "RateLimit" in str(exc) or "capacity" in str(exc).lower()
+            if is_rate_limit:
+                agent_log.warning(
+                    "[%d/%d] Rate limit (429) for %s — increase VACANCY_EXTRACTOR_DELAY "
+                    "(currently %.1f s).  Using empty fields.",
+                    idx, total, vacancy_id, delay_seconds,
+                )
+            else:
+                agent_log.warning(
+                    "[%d/%d] Extraction failed for %s: %s — using empty fields",
+                    idx, total, vacancy_id, exc,
+                )
             extracted = VacancyExtracted()
 
         results.append(extracted)
         time.sleep(delay_seconds)
 
+    agent_log.info(
+        "Field extraction finished — %d/%d ok  %d failed",
+        n_ok, total, n_failed,
+    )
     return results

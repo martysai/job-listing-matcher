@@ -19,7 +19,7 @@ File layout
     agent.py     — VacancyRefreshAgent orchestrator + scheduler entry point
 """
 
-from sara_retrieve_rerank.adzuna.adzuna_agent import run_scheduled_job
+from prompt_evaluation_draft.adzuna_agent import run_scheduled_job
 from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
 from sara_retrieve_rerank.adzuna.config import AdzunaQuery
 

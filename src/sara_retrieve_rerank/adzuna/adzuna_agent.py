@@ -27,7 +27,9 @@ build_llm(model_string)
 build_agent(ctx, llm)
     Собирает LangGraph ReAct агент:
       tools = build_tools(ctx)          # @tool-функции из tools.py
-      agent = create_react_agent(llm, tools, state_modifier=SYSTEM_PROMPT)
+      agent = create_react_agent(llm, tools)
+    Системный промпт передаётся первым сообщением в agent.invoke() —
+    совместимо со всеми версиями LangGraph.
     Агент выполняет цикл: LLM выбирает tool → tool возвращает текстовый
     результат → LLM принимает следующее решение.
 
@@ -55,26 +57,67 @@ LLM-провайдеры
 
 Зависимости
 -----------
-    pip install langgraph langchain-core langchain-community
-    pip install langchain-huggingface chromadb litellm
+    pip install langgraph langchain-core langchain-litellm
+    pip install langchain-huggingface chromadb litellm aiohttp
 """
 
 from __future__ import annotations
 
 import logging
-import os
+import time
 from typing import Any
 
 # ── LangChain / LangGraph ─────────────────────────────────────────────────────
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 # ── Проект ────────────────────────────────────────────────────────────────────
-from sara_retrieve_rerank.adzuna.config import CHROMA_COLLECTION_NAME, EXTRACTOR_MODEL
+from sara_retrieve_rerank.adzuna.config import (
+    AGENT_MODEL,
+    AGENT_LLM_RPS,
+    CHROMA_COLLECTION_NAME,
+    CHROMA_DB_PATH,
+    EMBEDDING_MODEL_NAME,
+    EXTRACTOR_MODEL,
+)
 from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
 from sara_retrieve_rerank.adzuna.tools import RefreshContext, build_tools
 
+import os  # noqa: E402 — after project imports for grouping clarity
+
 log = logging.getLogger("sara.agent")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Rate-limit callback
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _MinDelayCallback(BaseCallbackHandler):
+    """Enforces a minimum wall-clock delay between consecutive LLM calls.
+
+    Works with any LangChain model regardless of whether it supports the
+    ``rate_limiter`` constructor parameter.  Hooks into ``on_chat_model_start``
+    which fires before every model invocation inside the LangGraph ReAct loop.
+    """
+
+    def __init__(self, min_delay_seconds: float) -> None:
+        self._delay = min_delay_seconds
+        self._last: float = 0.0
+
+    def on_chat_model_start(self, serialized, messages, **kwargs) -> None:  # type: ignore[override]
+        elapsed = time.monotonic() - self._last
+        wait = self._delay - elapsed
+        if wait > 0:
+            log.debug("Rate limiter: waiting %.2f s before LLM call", wait)
+            time.sleep(wait)
+
+    def on_llm_end(self, response, **kwargs) -> None:  # type: ignore[override]
+        self._last = time.monotonic()
+
+    def on_llm_error(self, error, **kwargs) -> None:  # type: ignore[override]
+        # Reset timer on error so next call isn't held back unnecessarily.
+        self._last = time.monotonic()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -131,10 +174,9 @@ Rules
 def build_llm(model_string: str) -> Any:
     """Вернуть LangChain chat-модель через ChatLiteLLM.
 
-    Принимает строку в формате litellm — том же, что уже используется
-    в переменной RERANK_LLM_MODEL по всему проекту.  ChatLiteLLM
-    делегирует вызов нужному провайдеру через установленный litellm,
-    не требуя отдельных provider-пакетов (langchain-mistralai и т.п.).
+    Rate limiting реализован через _MinDelayCallback, а не через параметр
+    rate_limiter конструктора — не все провайдеры в langchain_litellm
+    поддерживают этот параметр.  Callback работает с любой моделью.
 
     Примеры model_string
     --------------------
@@ -145,7 +187,7 @@ def build_llm(model_string: str) -> Any:
     API-ключи читаются из окружения автоматически через litellm
     (MISTRAL_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).
     """
-    from langchain_community.chat_models import ChatLiteLLM
+    from langchain_litellm import ChatLiteLLM  # pip install langchain-litellm
 
     return ChatLiteLLM(
         model       = model_string,
@@ -189,10 +231,15 @@ def build_agent(ctx: RefreshContext, llm: Any) -> Any:
         [t.name for t in tools],
     )
 
+    # Системный промпт НЕ передаём в create_react_agent, чтобы избежать
+    # несовместимости между версиями LangGraph:
+    #   < 0.2.27 — параметра нет совсем
+    #   0.2.x    — state_modifier
+    #   0.3+     — prompt
+    # Вместо этого SYSTEM_PROMPT передаётся первым сообщением в agent.invoke().
     agent = create_react_agent(
-        model          = llm,
-        tools          = tools,
-        state_modifier = SYSTEM_PROMPT,   # системный промпт виден LLM на каждом шаге
+        model = llm,
+        tools = tools,
     )
     return agent
 
@@ -209,10 +256,11 @@ def run_scheduled_job() -> dict:
 
     Переменные окружения
     --------------------
-    VACANCY_AGENT_LLM_MODEL     строка модели (default: mistral/mistral-large-latest)
-    MISTRAL_API_KEY             ключ Mistral (или OPENAI_API_KEY / ANTHROPIC_API_KEY)
-    EMBEDDING_MODEL_NAME        HuggingFace-модель для эмбеддингов вакансий
-    CHROMA_DB_PATH              путь к Chroma (default: data/chroma)
+    VACANCY_AGENT_LLM_MODEL   строка модели (default: mistral/mistral-large-latest)
+    MISTRAL_API_KEY           ключ Mistral (или OPENAI_API_KEY / ANTHROPIC_API_KEY)
+    VACANCY_AGENT_LLM_RPS     темп LLM-вызовов агента, req/s (default: 0.3 ≈ 1/3сек)
+    EMBEDDING_MODEL_NAME      HuggingFace-модель для эмбеддингов вакансий
+    CHROMA_DB_PATH            путь к Chroma (default: data/chroma)
     + все переменные из config.py (ADZUNA_APP_ID, ADZUNA_APP_KEY, ...)
 
     Возвращает
@@ -234,17 +282,23 @@ def run_scheduled_job() -> dict:
     import chromadb
     from langchain_huggingface import HuggingFaceEmbeddings
 
-    # ── Инфраструктура ────────────────────────────────────────────────────────
-    chroma_path = os.environ.get("CHROMA_DB_PATH", "data/chroma")
+    # ── Валидация Adzuna credentials ──────────────────────────────────────────
+    # Пустые credentials дают HTTP 404 на каждый запрос к API.
+    from sara_retrieve_rerank.adzuna.config import ADZUNA_APP_ID, ADZUNA_APP_KEY
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        return {
+            "status": "error",
+            "error": (
+                "ADZUNA_APP_ID и ADZUNA_APP_KEY не заданы. "
+                "Зарегистрируйтесь на https://developer.adzuna.com/ "
+                "и добавьте ключи в .env."
+            ),
+        }
 
-    embedder = HuggingFaceEmbeddings(
-        model_name=os.environ.get(
-            "EMBEDDING_MODEL_NAME",
-            "sentence-transformers/all-MiniLM-L6-v2",
-        )
-    )
+    # ── Инфраструктура ────────────────────────────────────────────────────────
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
     chroma_collection = (
-        chromadb.PersistentClient(path=chroma_path)
+        chromadb.PersistentClient(path=CHROMA_DB_PATH)
         .get_or_create_collection(CHROMA_COLLECTION_NAME)
     )
 
@@ -255,32 +309,42 @@ def run_scheduled_job() -> dict:
         query_builder     = QueryBuilder(counter),
         embedder          = embedder,
         chroma_collection = chroma_collection,
-        extractor_model   = os.environ.get(
-            "VACANCY_EXTRACTOR_LLM_MODEL", EXTRACTOR_MODEL
-        ),
+        extractor_model   = os.environ.get("VACANCY_EXTRACTOR_LLM_MODEL", EXTRACTOR_MODEL),
     )
 
-    # ── LLM ───────────────────────────────────────────────────────────────────
-    # Та же строка модели, что используется для RERANK_LLM_MODEL в проекте.
-    model_string = os.environ.get(
-        "VACANCY_AGENT_LLM_MODEL", "mistral/mistral-large-latest"
-    )
+    # ── LLM + rate-limit callback ─────────────────────────────────────────────
+    model_string = os.environ.get("VACANCY_AGENT_LLM_MODEL", AGENT_MODEL)
+    min_delay    = 1.0 / float(os.environ.get("VACANCY_AGENT_LLM_RPS", str(AGENT_LLM_RPS)))
+    log.info("LLM: %s  delay between calls: %.1f s", model_string, min_delay)
+
     try:
         llm = build_llm(model_string)
     except (ImportError, ValueError) as exc:
         log.error("Не удалось инициализировать LLM: %s", exc)
         return {"status": "error", "error": str(exc)}
 
+    rate_cb = _MinDelayCallback(min_delay_seconds=min_delay)
+
     # ── Агент ─────────────────────────────────────────────────────────────────
     agent = build_agent(ctx, llm)
 
-    log.info("Запуск цикла обновления вакансий. Модель: %s", model_string)
+    log.info("Запуск цикла обновления вакансий.")
     try:
         result = agent.invoke(
-            input  = {"messages": [("user", "Run the vacancy refresh cycle now.")]},
-            config = {"recursion_limit": 20},
-            # recursion_limit — максимум шагов (LLM + tool calls).
-            # 4 tools × 2 вызова + рассуждения LLM = 20 достаточно.
+            input={
+                "messages": [
+                    # Системный промпт передаётся первым сообщением —
+                    # совместимо со всеми версиями LangGraph.
+                    SYSTEM_PROMPT,
+                    ("user", "Run the vacancy refresh cycle now."),
+                ]
+            },
+            config={
+                "recursion_limit": 20,
+                # _MinDelayCallback перехватывает on_chat_model_start
+                # и добавляет паузу перед каждым LLM-вызовом.
+                "callbacks": [rate_cb],
+            },
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("Агент завершился с ошибкой: %s", exc)

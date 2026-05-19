@@ -115,6 +115,7 @@ ADZUNA_VACANCY_TTL_DAYS=14              # days before a vacancy expires in Chrom
 # ── LLM for the orchestrating agent ──────────────────────────────────────────
 VACANCY_AGENT_LLM_MODEL=mistral/mistral-large-latest
 MISTRAL_API_KEY=your_key                 # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+LITELLM_RETRY_AFTER_WAIT_TIME=2          # base pause between retries on 429 (sec)
 
 # ── LLM for SGR vacancy field extraction ─────────────────────────────────────
 VACANCY_EXTRACTOR_LLM_MODEL=mistral/mistral-small-latest
