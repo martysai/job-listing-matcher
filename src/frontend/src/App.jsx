@@ -1,0 +1,126 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { MessageBubble } from "./components/MessageBubble";
+import { ChatInput } from "./components/ChatInput";
+import { JobResults } from "./components/JobResults";
+import { useChat } from "./hooks/useChat";
+import { useJobs } from "./hooks/useJobs";
+
+export default function App() {
+  const { jobs, fetchJobs, isLoading: jobsLoading, error: jobsError } = useJobs();
+  const [showJobs, setShowJobs] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const handleReadyToSearch = useCallback(
+    (profile) => {
+      setShowJobs(true);
+      fetchJobs(profile);
+    },
+    [fetchJobs]
+  );
+
+  const { messages, sendMessage, isStreaming } = useChat({
+    onReadyToSearch: handleReadyToSearch,
+  });
+
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        height: "100dvh",
+        background: "var(--bg)",
+        fontFamily: "var(--font)",
+        color: "var(--text-primary)",
+      }}
+    >
+      {/* ── Left panel: Chat ── */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          width: showJobs ? "42%" : "100%",
+          maxWidth: showJobs ? "none" : 720,
+          margin: showJobs ? 0 : "0 auto",
+          borderRight: showJobs ? "1px solid var(--border)" : "none",
+          transition: "width 0.4s ease",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: "18px 24px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: "var(--surface)",
+          }}
+        >
+          <div
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: "50%",
+              background: "var(--accent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 18,
+              color: "#fff",
+            }}
+          >
+            ✦
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Job Match</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+              {isStreaming ? "Typing…" : "Online"}
+            </div>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 8px" }}>
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <ChatInput onSend={sendMessage} disabled={isStreaming} />
+      </div>
+
+      {/* ── Right panel: Job results ── */}
+      {showJobs && (
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            background: "var(--surface)",
+          }}
+        >
+          {/* Results header */}
+          <div
+            style={{
+              padding: "18px 24px",
+              borderBottom: "1px solid var(--border)",
+              fontWeight: 700,
+              fontSize: 16,
+              background: "var(--surface)",
+              position: "sticky",
+              top: 0,
+              zIndex: 1,
+            }}
+          >
+            Recommended Jobs
+          </div>
+          <JobResults jobs={jobs} isLoading={jobsLoading} error={jobsError} />
+        </div>
+      )}
+    </div>
+  );
+}

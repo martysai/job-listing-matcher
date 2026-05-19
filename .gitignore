@@ -225,5 +225,8 @@ chroma/
 data/processed/
 data/raw/
 
+# Node.js
+node_modules/
+
 # Local agent/editor state
 .claude/
