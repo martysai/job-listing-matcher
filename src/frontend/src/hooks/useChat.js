@@ -1,24 +1,53 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
-/**
- * useChat — manages message history and streams responses from the backend.
- *
- * Events from the backend:
- *   { type: "text",           content: "..." }   → append to current assistant bubble
- *   { type: "ready_to_search", profile: {...} }  → trigger job search
- *   { type: "done" }                             → stream finished
- */
+const WELCOME = {
+  id: "welcome",
+  role: "assistant",
+  content:
+    "Hi! I'm your job search assistant. Tell me what kind of role you're looking for and I'll find the best matches for you. What type of job are you interested in?",
+};
+
+function getOrCreateSessionId() {
+  let id = localStorage.getItem("session_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("session_id", id);
+  }
+  return id;
+}
+
 export function useChat({ onReadyToSearch }) {
-  const [messages, setMessages] = useState([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Hi! I'm your job search assistant. Tell me what kind of role you're looking for and I'll find the best matches for you. What type of job are you interested in?",
-    },
-  ]);
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
+  const [messages, setMessages] = useState([WELCOME]);
   const [isStreaming, setIsStreaming] = useState(false);
   const readerRef = useRef(null);
+
+  // Hydrate from server whenever the session changes
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/chat/history/${sessionId}`)
+      .then((r) => r.json())
+      .then((history) => {
+        if (cancelled) return;
+        setMessages(
+          history.length > 0
+            ? history.map((m, i) => ({ ...m, id: String(i) }))
+            : [WELCOME]
+        );
+      })
+      .catch(() => {}); // fall back to welcome message on any error
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  const reset = useCallback(() => {
+    fetch(`/api/chat/reset/${sessionId}`, { method: "POST" }).catch(() => {});
+    const newId = crypto.randomUUID();
+    localStorage.setItem("session_id", newId);
+    setSessionId(newId);
+    setMessages([WELCOME]);
+  }, [sessionId]);
 
   const sendMessage = useCallback(
     async (userText) => {
@@ -34,7 +63,6 @@ export function useChat({ onReadyToSearch }) {
       ]);
       setIsStreaming(true);
 
-      // Build history for the API (exclude the empty assistant placeholder)
       const history = [...messages, userMsg].map(({ role, content }) => ({
         role,
         content,
@@ -44,10 +72,7 @@ export function useChat({ onReadyToSearch }) {
         const res = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: history,
-            session_id: "demo-session",
-          }),
+          body: JSON.stringify({ messages: history, session_id: sessionId }),
         });
 
         const reader = res.body.getReader();
@@ -61,7 +86,7 @@ export function useChat({ onReadyToSearch }) {
 
           buf += decoder.decode(value, { stream: true });
           const lines = buf.split("\n");
-          buf = lines.pop(); // keep incomplete last line
+          buf = lines.pop();
 
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
@@ -78,7 +103,6 @@ export function useChat({ onReadyToSearch }) {
             } else if (event.type === "ready_to_search") {
               onReadyToSearch(event.profile);
             }
-            // "done" → loop will break via reader.read() returning done=true
           }
         }
       } catch (err) {
@@ -96,12 +120,12 @@ export function useChat({ onReadyToSearch }) {
         readerRef.current = null;
       }
     },
-    [messages, isStreaming, onReadyToSearch]
+    [messages, isStreaming, onReadyToSearch, sessionId]
   );
 
   const cancelStream = useCallback(() => {
     readerRef.current?.cancel();
   }, []);
 
-  return { messages, sendMessage, isStreaming, cancelStream };
+  return { messages, sendMessage, isStreaming, cancelStream, reset };
 }

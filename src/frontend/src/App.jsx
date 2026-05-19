@@ -18,9 +18,14 @@ export default function App() {
     [fetchJobs]
   );
 
-  const { messages, sendMessage, isStreaming } = useChat({
+  const { messages, sendMessage, isStreaming, reset } = useChat({
     onReadyToSearch: handleReadyToSearch,
   });
+
+  const handleReset = useCallback(() => {
+    reset();
+    setShowJobs(false);
+  }, [reset]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -75,12 +80,42 @@ export default function App() {
           >
             ✦
           </div>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 16 }}>Job Match</div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
               {isStreaming ? "Typing…" : "Online"}
             </div>
           </div>
+
+          {/* Reset button */}
+          <button
+            onClick={handleReset}
+            disabled={isStreaming}
+            title="Start a new chat"
+            style={{
+              padding: "6px 14px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "transparent",
+              color: "var(--text-secondary)",
+              fontSize: 13,
+              fontFamily: "inherit",
+              cursor: isStreaming ? "not-allowed" : "pointer",
+              transition: "color 0.15s, border-color 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              if (!isStreaming) {
+                e.currentTarget.style.color = "var(--text-primary)";
+                e.currentTarget.style.borderColor = "var(--text-secondary)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--text-secondary)";
+              e.currentTarget.style.borderColor = "var(--border)";
+            }}
+          >
+            New chat
+          </button>
         </div>
 
         {/* Messages */}
