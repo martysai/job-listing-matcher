@@ -29,11 +29,7 @@ export function useChat({ onReadyToSearch }) {
       .then((r) => r.json())
       .then((history) => {
         if (cancelled) return;
-        setMessages(
-          history.length > 0
-            ? history.map((m, i) => ({ ...m, id: String(i) }))
-            : [WELCOME]
-        );
+        setMessages([WELCOME, ...history.map((m, i) => ({ ...m, id: String(i) }))]);
       })
       .catch(() => {}); // fall back to welcome message on any error
     return () => {

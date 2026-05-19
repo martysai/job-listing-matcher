@@ -52,7 +52,11 @@ class ConversationService:
         Stream events to the client.
         Detects the <SEARCH_READY> block and emits a structured event.
         """
-        buffer = ""
+        # Two separate buffers prevent the pre-text from being re-emitted on
+        # every chunk while waiting for </SEARCH_READY> to arrive.
+        text_buffer = ""
+        search_buffer = ""
+        in_search_block = False
         search_emitted = False
 
         async with self.client.messages.stream(
@@ -62,37 +66,37 @@ class ConversationService:
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
-                buffer += text
+                if not in_search_block:
+                    text_buffer += text
 
-                # Check if we're accumulating a <SEARCH_READY> block
-                if "<SEARCH_READY>" in buffer:
-                    # Split into before and inside/after the block
-                    pre, rest = buffer.split("<SEARCH_READY>", 1)
+                    if "<SEARCH_READY>" in text_buffer:
+                        pre, rest = text_buffer.split("<SEARCH_READY>", 1)
+                        if pre:
+                            yield {"type": "text", "content": pre}
+                        in_search_block = True
+                        search_buffer = rest
+                        text_buffer = ""
+                    else:
+                        # Hold back 20 chars to avoid splitting the opening tag
+                        if len(text_buffer) > 20:
+                            safe, text_buffer = text_buffer[:-20], text_buffer[-20:]
+                            yield {"type": "text", "content": safe}
+                else:
+                    search_buffer += text
 
-                    # Yield text before the marker
-                    if pre.strip():
-                        yield {"type": "text", "content": pre}
-
-                    if "</SEARCH_READY>" in rest and not search_emitted:
-                        json_str, after = rest.split("</SEARCH_READY>", 1)
+                    if "</SEARCH_READY>" in search_buffer and not search_emitted:
+                        json_str, after = search_buffer.split("</SEARCH_READY>", 1)
                         try:
                             profile = json.loads(json_str.strip())
                             yield {"type": "ready_to_search", "profile": profile}
                             search_emitted = True
                         except json.JSONDecodeError:
-                            pass  # Malformed — just skip
+                            pass
+                        in_search_block = False
+                        text_buffer = after
+                        search_buffer = ""
 
-                        buffer = after  # Continue with any text after the block
-                    # else: still accumulating the closing tag — wait
-                else:
-                    # No search block in flight — yield text if we have a safe chunk
-                    # Hold back last 20 chars to avoid splitting the opening tag
-                    if len(buffer) > 20:
-                        safe, buffer = buffer[:-20], buffer[-20:]
-                        yield {"type": "text", "content": safe}
-
-        # Flush remaining buffer
-        if buffer.strip() and "<SEARCH_READY>" not in buffer:
-            yield {"type": "text", "content": buffer}
+        if text_buffer.strip():
+            yield {"type": "text", "content": text_buffer}
 
         yield {"type": "done"}
