@@ -20,7 +20,6 @@ from pydantic import BaseModel
 from adzuna.config import (
     EXTRACTOR_DELAY_SECONDS,
     EXTRACTOR_MODEL,
-    LLM_LOG_PATH,
 )
 from sara_retrieve_rerank.llm_logging import (
     setup_llm_jsonl_logger,
@@ -144,7 +143,6 @@ def extract_vacancy_fields_batch(
     vacancy_dicts: list[dict],
     *,
     model:         str  = EXTRACTOR_MODEL,
-    log_path:      Path = LLM_LOG_PATH,
     delay_seconds: float = EXTRACTOR_DELAY_SECONDS,
 ) -> list[VacancyExtracted]:
     """Tool 1.5 — extract structural fields from a batch of partial vacancy dicts.
@@ -160,12 +158,10 @@ def extract_vacancy_fields_batch(
         Partial dicts from scraper.adzuna_to_vacancy_dict().
     model:
         litellm model string.
-    log_path:
-        JSONL audit log (prompt / response / latency / error per call).
     delay_seconds:
         Pause between calls to avoid rate-limit errors.
     """
-    logger        = setup_llm_jsonl_logger(log_path)
+    logger        = setup_llm_jsonl_logger()
     logged_invoke = _make_logged_invoke(logger)
     results: list[VacancyExtracted] = []
     agent_log = logging.getLogger("sara.agent")

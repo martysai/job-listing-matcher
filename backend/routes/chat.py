@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from services.conversation import ConversationService
 from services.database import get_db
+from services import log_sink
 
 router = APIRouter()
 conversation_service = ConversationService()
@@ -48,11 +50,15 @@ async def chat_stream(request: ChatRequest):
                 if event["type"] == "text":
                     assistant_chunks.append(event["content"])
                 elif event["type"] == "ready_to_search":
-                    await db.execute(
-                        "INSERT INTO logs (session_id, event, payload, created_at) VALUES (?, ?, ?, ?)",
-                        (request.session_id, "job_search", json.dumps(event["profile"]), now),
+                    log_sink.append(
+                        ts=time.time(),
+                        level="info",
+                        logger="chat",
+                        component="chat",
+                        event="job_search",
+                        session_id=request.session_id,
+                        payload=event["profile"],
                     )
-                    await db.commit()
 
                 yield f"data: {json.dumps(event)}\n\n"
 

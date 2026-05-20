@@ -21,16 +21,6 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-
-CREATE TABLE IF NOT EXISTS logs (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT REFERENCES sessions(id),
-    event      TEXT NOT NULL,
-    payload    TEXT,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_logs_session ON logs(session_id);
 """
 
 

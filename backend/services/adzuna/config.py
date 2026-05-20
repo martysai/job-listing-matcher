@@ -76,11 +76,6 @@ CHROMA_COLLECTION_NAME: str = os.environ.get("CHROMA_COLLECTION_NAME", "vacancie
 # Path to the persistent Chroma directory.
 CHROMA_DB_PATH: str = os.environ.get("CHROMA_DB_PATH", "data/chroma")
 
-# JSONL audit log for every LLM call made by the field extractor.
-LLM_LOG_PATH: Path = Path(
-    os.environ.get("VACANCY_EXTRACTOR_LLM_LOG_PATH", "data/logs/vacancy_extractor.jsonl")
-)
-
 # Adzuna vacancies are pruned from Chroma after this many days if not
 # re-encountered by the scraper (i.e. the vacancy has likely been filled).
 TTL_DAYS: int = int(os.environ.get("ADZUNA_VACANCY_TTL_DAYS", "14"))

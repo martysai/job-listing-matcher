@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -11,6 +12,11 @@ from routes.history import router as history_router
 from routes.jobs import router as jobs_router
 from routes.logs import router as logs_router
 from services.database import init_db
+from services.log_sink import JsonlHandler
+
+_sara_handler = JsonlHandler()
+logging.getLogger("sara").addHandler(_sara_handler)
+logging.getLogger("sara").setLevel(logging.DEBUG)
 
 
 @asynccontextmanager
