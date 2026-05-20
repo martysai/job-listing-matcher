@@ -1,25 +1,14 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from services.recommender import RecommenderService
+from services.sara_candidate_poll import JobAndCandidateDescription
 
 router = APIRouter()
 recommender = RecommenderService()
 
 
-class UserProfile(BaseModel):
-    """Structured profile extracted from the conversation."""
-
-    title: str | None = None          # e.g. "Senior Python Engineer"
-    skills: list[str] = []            # e.g. ["Python", "FastAPI", "PostgreSQL"]
-    location: str | None = None       # e.g. "Berlin" or "Remote"
-    experience_years: int | None = None
-    job_type: str | None = None       # "full-time" | "part-time" | "contract"
-    salary_min: int | None = None
-    notes: str | None = None          # freeform extra context
-
-
 class JobRecommendationRequest(BaseModel):
-    profile: UserProfile
+    profile: JobAndCandidateDescription
     top_k: int = 10
 
 

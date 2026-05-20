@@ -52,15 +52,20 @@ class RecommenderService:
 
 def _build_query(profile: dict) -> str:
     """Convert structured profile to a retrieval query string."""
+    jd = profile.get("job_description", {})
+    cd = profile.get("candidate_description", {})
     parts = []
-    if profile.get("title"):
-        parts.append(profile["title"])
-    if profile.get("skills"):
-        parts.append(", ".join(profile["skills"]))
-    if profile.get("location"):
-        parts.append(profile["location"])
-    if profile.get("notes"):
-        parts.append(profile["notes"])
+    if jd.get("desired_positions"):
+        parts.append(", ".join(jd["desired_positions"]))
+    skills = cd.get("skills", []) + cd.get("languages", []) + jd.get("desired_tech_stack", [])
+    if skills:
+        parts.append(", ".join(dict.fromkeys(skills)))
+    wm = jd.get("preferred_work_mode") or {}
+    if wm.get("preferred_remote_policy"):
+        parts.append(", ".join(wm["preferred_remote_policy"]))
+    companies = jd.get("preferred_companies", [])
+    if companies and companies[0].get("location"):
+        parts.append(companies[0]["location"])
     return " | ".join(parts)
 
 
@@ -82,9 +87,18 @@ def _format_job(raw: dict) -> dict:
 # ── Stub data (delete once real ML is connected) ───────────────────────────────
 
 def _stub_jobs(profile: dict, n: int) -> list[dict]:
-    skills = profile.get("skills", ["Python"])
-    title  = profile.get("title", "Software Engineer")
-    loc    = profile.get("location", "Remote")
+    jd = profile.get("job_description", {})
+    cd = profile.get("candidate_description", {})
+    skills = list(dict.fromkeys(
+        cd.get("skills", []) + cd.get("languages", []) + jd.get("desired_tech_stack", [])
+    )) or ["Python"]
+    positions = jd.get("desired_positions", [])
+    title = positions[0] if positions else "Software Engineer"
+    companies = jd.get("preferred_companies", [])
+    wm = jd.get("preferred_work_mode") or {}
+    loc = (companies[0].get("location") if companies else None) or (
+        "Remote" if "remote" in wm.get("preferred_remote_policy", []) else "Remote"
+    )
 
     templates = [
         ("Acme Corp",    0.97, 90_000),
