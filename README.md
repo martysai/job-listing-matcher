@@ -89,6 +89,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m ensurepip --upgrade
 python -m pip install --upgrade pip setuptools wheel
+
+# CPU-only torch must come first for VPS deployment — sentence-transformers
+# otherwise triggers the default PyPI torch wheel which bundles ~2 GB of
+# CUDA libraries.
+# python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
 python -m pip install -e .[server,rerank,dev]
 python scripts/check_env.py
 ```
