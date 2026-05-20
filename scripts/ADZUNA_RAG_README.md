@@ -9,11 +9,8 @@ that match.
 From the repo root:
 
 ```bash
-python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e .[server,rerank]
 ```
-
-`requests` is the only new dependency this script adds.
 
 ## 2. Credentials
 

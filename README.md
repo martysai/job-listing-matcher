@@ -52,7 +52,6 @@ The current pipeline is preserved:
 ├── config.yaml                  # path / model / sampling overrides
 ├── AGENTS.md
 ├── IMPROVEMENTS.md
-├── requirements.txt
 └── pyproject.toml
 ```
 
@@ -90,8 +89,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m ensurepip --upgrade
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e .[server,rerank,dev]
 python scripts/check_env.py
 ```
 
@@ -573,17 +571,17 @@ In Colab, upload this repo or clone it, then run the notebook's optional install
 Dependencies are not installed in the Python interpreter that ran the script. Use:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -e .[server,rerank,dev]
 ```
 
 Do not use plain `pip` unless you are sure it belongs to the same interpreter.
 
 ### `ModuleNotFoundError: No module named 'sara_retrieve_rerank'`
 
-The project package is not installed or the notebook kernel does not know about `src/`. Use:
+The project package is not installed. Use:
 
 ```bash
-python -m pip install -e .
+python -m pip install -e .[server,rerank,dev]
 ```
 
 For notebooks, run the first bootstrap cell and select `.venv/bin/python` as the kernel.
