@@ -21,7 +21,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from sara_retrieve_rerank.adzuna.config import (
+from adzuna.config import (
     ADZUNA_APP_ID,
     ADZUNA_APP_KEY,
     ADZUNA_BASE_URL,
@@ -34,7 +34,7 @@ from sara_retrieve_rerank.adzuna.config import (
 from sara_retrieve_rerank.preprocessing import clean_html
 
 if TYPE_CHECKING:
-    from sara_retrieve_rerank.adzuna.extractor import VacancyExtracted
+    from adzuna.extractor import VacancyExtracted
 
 
 async def scrape_adzuna_batch(

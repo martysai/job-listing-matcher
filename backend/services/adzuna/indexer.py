@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sara_retrieve_rerank.adzuna.config import ADZUNA_VACANCIES_JSONL, TTL_DAYS
+from adzuna.config import ADZUNA_VACANCIES_JSONL, TTL_DAYS
 from sara_retrieve_rerank.documents import vacancy_to_metadata, vacancy_to_text
 
 

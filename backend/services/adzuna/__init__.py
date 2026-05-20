@@ -1,13 +1,13 @@
 """
-sara_retrieve_rerank.adzuna
-============================
+adzuna
+======
 Scheduled agent that keeps the Chroma vacancy index fresh by scraping
 Adzuna API on a cron-like schedule.
 
 Public surface
 --------------
-    from sara_retrieve_rerank.adzuna import VacancyRefreshAgent, ProfileCounter
-    from sara_retrieve_rerank.adzuna.agent import run_scheduled_job
+    from adzuna import VacancyRefreshAgent, ProfileCounter
+    from adzuna.agent import run_scheduled_job
 
 File layout
 -----------
@@ -19,9 +19,9 @@ File layout
     agent.py     — VacancyRefreshAgent orchestrator + scheduler entry point
 """
 
-from prompt_evaluation_draft.adzuna_agent import run_scheduled_job
-from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
-from sara_retrieve_rerank.adzuna.config import AdzunaQuery
+from adzuna.adzuna_agent import run_scheduled_job
+from adzuna.counter import ProfileCounter, QueryBuilder
+from adzuna.config import AdzunaQuery
 
 __all__ = [
     "run_scheduled_job",

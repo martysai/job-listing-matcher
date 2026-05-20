@@ -10,11 +10,11 @@ FastAPI service that powers the job-matching chat interface. It streams conversa
 ## Setup
 
 ```bash
-# From src/backend/
+# From the project root
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
-pip install -r requirements.txt
+pip install -e .[server,rerank]
 ```
 
 Create a `.env` file (or copy the existing one) and fill in your key:
@@ -103,14 +103,16 @@ The `_build_query` and `_format_job` helpers in that file are ready to use as-is
 ## Project Structure
 
 ```
-src/backend/
+backend/
 ├── main.py                  # FastAPI app, CORS, router registration
-├── requirements.txt
 ├── .env                     # ANTHROPIC_API_KEY (not committed)
 ├── routes/
 │   ├── chat.py              # POST /api/chat/stream
 │   └── jobs.py              # POST /api/jobs/recommend
 └── services/
     ├── conversation.py      # Claude streaming + <SEARCH_READY> detection
-    └── recommender.py       # ML adapter (stub — plug in your code here)
+    ├── recommender.py       # ML adapter (stub — plug in your code here)
+    ├── sara_retrieve_rerank/  # retrieval + reranking pipeline
+    ├── sara_candidate_poll/   # candidate profile extraction
+    └── adzuna/               # vacancy scraper + refresh agent
 ```

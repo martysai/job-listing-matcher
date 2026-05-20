@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from sara_retrieve_rerank.adzuna.config import (
+from adzuna.config import (
     EXTRACTOR_DELAY_SECONDS,
     EXTRACTOR_MODEL,
     LLM_LOG_PATH,

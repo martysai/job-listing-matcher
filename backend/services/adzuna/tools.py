@@ -29,11 +29,11 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from sara_retrieve_rerank.adzuna.config import EXTRACTOR_MODEL, MAX_VACANCIES_PER_RUN
-from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
-from sara_retrieve_rerank.adzuna.extractor import extract_vacancy_fields_batch
-from sara_retrieve_rerank.adzuna.indexer import partial_reindex, vectorize_vacancies
-from sara_retrieve_rerank.adzuna.scraper import (
+from adzuna.config import EXTRACTOR_MODEL, MAX_VACANCIES_PER_RUN
+from adzuna.counter import ProfileCounter, QueryBuilder
+from adzuna.extractor import extract_vacancy_fields_batch
+from adzuna.indexer import partial_reindex, vectorize_vacancies
+from adzuna.scraper import (
     adzuna_to_vacancy_dict,
     merge_extracted,
     scrape_adzuna_batch,
@@ -90,7 +90,7 @@ def build_tools(ctx: RefreshContext) -> list:
         queries = ctx.query_builder.build()
 
         if broaden:
-            from sara_retrieve_rerank.adzuna.config import AdzunaQuery
+            from adzuna.config import AdzunaQuery
             queries = [
                 AdzunaQuery(q.what, "", q.category, q.results_per_page)
                 for q in queries

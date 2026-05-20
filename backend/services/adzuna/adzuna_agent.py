@@ -73,7 +73,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 # ── Проект ────────────────────────────────────────────────────────────────────
-from sara_retrieve_rerank.adzuna.config import (
+from adzuna.config import (
     AGENT_MODEL,
     AGENT_LLM_RPS,
     CHROMA_COLLECTION_NAME,
@@ -81,8 +81,8 @@ from sara_retrieve_rerank.adzuna.config import (
     EMBEDDING_MODEL_NAME,
     EXTRACTOR_MODEL,
 )
-from sara_retrieve_rerank.adzuna.counter import ProfileCounter, QueryBuilder
-from sara_retrieve_rerank.adzuna.tools import RefreshContext, build_tools
+from adzuna.counter import ProfileCounter, QueryBuilder
+from adzuna.tools import RefreshContext, build_tools
 
 import os  # noqa: E402 — after project imports for grouping clarity
 
@@ -284,7 +284,7 @@ def run_scheduled_job() -> dict:
 
     # ── Валидация Adzuna credentials ──────────────────────────────────────────
     # Пустые credentials дают HTTP 404 на каждый запрос к API.
-    from sara_retrieve_rerank.adzuna.config import ADZUNA_APP_ID, ADZUNA_APP_KEY
+    from adzuna.config import ADZUNA_APP_ID, ADZUNA_APP_KEY
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         return {
             "status": "error",

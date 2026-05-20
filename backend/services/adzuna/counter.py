@@ -27,7 +27,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sara_retrieve_rerank.adzuna.config import (
+from adzuna.config import (
     AdzunaQuery,
     COUNTER_STORAGE_PATH,
     DAILY_REQUEST_BUDGET,
