@@ -14,7 +14,7 @@ lxml
 beautifulsoup4~=4.14.3
 matplotlib~=3.10.9
 pytest
-
+requests
 pydantic~=2.12.5
 langgraph~=1.2.0
 numpy~=2.4.4

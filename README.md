@@ -599,6 +599,98 @@ source .venv/bin/activate
 
 After activation, `python` should work.
 
+## Live Adzuna RAG search
+
+`scripts/adzuna_rag.py` is a small standalone script that emulates a RAG-style
+job search over the public Adzuna API. Give it a candidate's free-text job
+request and it returns the top live vacancies that match.
+
+Setup credentials (one-time). Adzuna free tier has a monthly call budget, so
+the script caches every response under `data/cache/adzuna/`:
+
+```bash
+cp .env.example .env
+# Then edit .env and set:
+#   ADZUNA_APP_ID=<your app id>
+#   ADZUNA_APP_KEY=<your app key>
+```
+
+If your `.env.example` does not list the Adzuna keys yet, add them by hand:
+
+```text
+ADZUNA_APP_ID=
+ADZUNA_APP_KEY=
+```
+
+You can also pass the credentials on the CLI (`--app-id` / `--app-key`) or
+export them as environment variables.
+
+Run a search across the default European endpoints + UK:
+
+```bash
+python scripts/adzuna_rag.py --query "junior data scientist remote Python NLP" --top-k 10
+```
+
+Restrict the search to specific country endpoints and an optional location:
+
+```bash
+python scripts/adzuna_rag.py \
+    --query "senior backend engineer Go fintech" \
+    --countries gb,de,nl \
+    --where london \
+    --top-k 15
+```
+
+Useful flags:
+- `--countries gb,de,fr,nl,it,es,pl` — comma-separated Adzuna country codes.
+- `--results-per-page 50` — Adzuna max page size (default 50).
+- `--max-days-old 14` — only return jobs posted in the last N days.
+- `--output-jsonl outputs/adzuna_results.jsonl` — dump merged results to disk.
+- `--no-cache` — skip the on-disk cache (will burn quota; only use to refresh).
+
+Ranking is Adzuna's built-in relevance order. Results are merged across
+countries and re-sorted by a derived relevance score so the top matches show
+up first.
+
+### Adzuna API — legal use & attribution
+
+Before integrating this script into anything beyond local experimentation,
+read Adzuna's [Terms of Service](https://developer.adzuna.com/docs/terms_of_service).
+Key points relevant to this repo (paraphrased; the TOS is the source of truth):
+
+- **Permitted use.** "Personal research" is one of the three explicitly
+  permitted uses of the API, alongside publishing Adzuna ad listings and
+  publishing Jobsworth salary estimates. Educational / personal exploration
+  fits squarely inside the personal research clause.
+- **Free-tier rate limits.** 25 hits/min, 250/day, 1000/week, 2500/month.
+  This script makes one call per country per query and caches every response
+  on disk, so an iteration cycle costs ~1 call.
+- **Academic / commercial / government organisations.** Any use "by a
+  commercial, government or academic organisation including any affiliates or
+  individuals" only gets a 14-day trial for validation, after which a written
+  licence agreement may be required. Beyond the trial, the data may **not**
+  be used "in its original format or in aggregation … to deliver any ongoing
+  work or research" without written consent. If you are running this work
+  under an institutional affiliation, treat your usage as the trial path and
+  contact Adzuna before relying on the data long-term.
+- **Mandatory attribution.** When you publish anything derived from the API
+  (a paper, a notebook, a screenshot, a blog post, a public repo), you must
+  acknowledge Adzuna: reference "The Adzuna API" with a link to
+  <https://www.adzuna.co.uk/> (or the relevant local domain). Ad listings
+  displayed in a UI need the "Jobs by Adzuna" badge (≥ 116 × 23 px) with
+  hyperlinks.
+- **Confidentiality / scraping.** "Any usage that appears to be an attempt
+  to extract Confidential Information for commercial reuse" is a breach. No
+  rebuilding a competing job board from the cached responses.
+- **Termination obligation.** "Upon termination of this agreement … an API
+  user shall immediately remove all insertion codes and data acquired from
+  Adzuna from all pages of its web sites." For this reason raw Adzuna
+  responses are kept under the gitignored `data/cache/adzuna/` and
+  `outputs/` paths, **not** committed to the repository.
+
+**Project-level attribution.** Job listings retrieved by `scripts/adzuna_rag.py`
+are powered by [The Adzuna API](https://www.adzuna.co.uk/).
+
 ## LLM call audit logging
 
 Pass `--llm-log-path data/logs/rerank_llm.jsonl` (or set
