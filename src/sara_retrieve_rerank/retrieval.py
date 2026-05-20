@@ -54,9 +54,21 @@ def retrieve_and_rerank_top_vacancies(
     return reranker(candidate, matches)
 
 
-def retrieve_all_matches(candidates: list[dict], vectorstore: Chroma, k: int = TOP_K) -> list[dict]:
+def retrieve_all_matches(
+    candidates: list[dict],
+    vectorstore: Chroma,
+    k: int = TOP_K,
+    *,
+    show_progress: bool = False,
+) -> list[dict]:
     """Retrieve top-K matches for every candidate."""
+    if show_progress:
+        from sara_retrieve_rerank.bm25_retrieval import _wrap_progress
+
+        iterable = _wrap_progress(candidates, label="Dense retrieval", enabled=True)
+    else:
+        iterable = candidates
     all_matches: list[dict] = []
-    for candidate in candidates:
+    for candidate in iterable:
         all_matches.extend(retrieve_top_vacancies(candidate, vectorstore, k=k))
     return all_matches

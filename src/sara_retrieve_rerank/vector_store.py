@@ -67,3 +67,18 @@ def index_documents(
         ids = [doc.metadata["dataset_id"] for doc in batch]
         vectorstore.add_documents(batch, ids=ids)
         print(f"Added batch {i}: {len(batch)} vacancies")
+
+
+def vectorstore_is_empty(vectorstore: Chroma) -> bool:
+    """Best-effort emptiness check for a Chroma vector store.
+
+    Used by the pipeline wrapper to decide whether to (re)build the index on
+    startup or reuse the persisted one.
+    """
+    collection = getattr(vectorstore, "_collection", None)
+    if collection is None:
+        return True
+    try:
+        return int(collection.count()) == 0
+    except Exception:
+        return True

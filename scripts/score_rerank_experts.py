@@ -15,6 +15,7 @@ import argparse
 
 from sara_retrieve_rerank.config import (
     DEFAULT_CANDIDATES_PATH,
+    DEFAULT_CANDIDATES_SCHEMA_PATH,
     DEFAULT_MATCHES_OUTPUT_PATH,
     DEFAULT_RERANK_FEATURES_OUTPUT_PATH,
     DEFAULT_SCORED_RERANK_FEATURES_OUTPUT_PATH,
@@ -26,11 +27,20 @@ from sara_retrieve_rerank.config import (
     RERANK_VALIDATION_MAX_NEGATIVES_PER_CANDIDATE,
 )
 from sara_retrieve_rerank.data import load_jsonl, write_jsonl
+from sara_retrieve_rerank.llm_logging import (
+    setup_llm_jsonl_logger,
+    wrap_invoke_with_logging,
+)
 from sara_retrieve_rerank.reranking import (
+    DEFAULT_LLM_SCORE_FIELDS,
     build_pair_feature_rows,
     make_rate_limited_invoker,
     prepare_rows_for_llm_scoring,
     score_feature_rows_with_experts,
+)
+from sara_retrieve_rerank.schema_features import (
+    enrich_rows_with_schema_features,
+    load_candidate_schema_map,
 )
 
 
@@ -39,6 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features-path", default=str(DEFAULT_RERANK_FEATURES_OUTPUT_PATH))
     parser.add_argument("--matches-path", default=str(DEFAULT_MATCHES_OUTPUT_PATH))
     parser.add_argument("--candidates-path", default=str(DEFAULT_CANDIDATES_PATH))
+    parser.add_argument(
+        "--candidates-schema-path",
+        default=str(DEFAULT_CANDIDATES_SCHEMA_PATH),
+        help=(
+            "Path to candidates_with_schema.jsonl. When present, scored rows "
+            "are enriched with schema-based tabular reranker features."
+        ),
+    )
     parser.add_argument("--vacancies-path", default=str(DEFAULT_VACANCIES_PATH))
     parser.add_argument("--output-path", default=str(DEFAULT_SCORED_RERANK_FEATURES_OUTPUT_PATH))
     parser.add_argument("--provider", default=None)
@@ -50,6 +68,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark-user-fraction", type=float, default=None)
     parser.add_argument("--benchmark-seed", type=int, default=42)
     parser.add_argument("--max-rows", type=int, default=None)
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=0,
+        help=(
+            "Persist partial progress every N newly scored rows (0 disables checkpoints). "
+            "Useful for resuming with --rewrite-mode after interruption."
+        ),
+    )
+    parser.add_argument(
+        "--rewrite-mode",
+        action="store_true",
+        help=(
+            "Reuse already-scored candidate/vacancy pairs from --output-path and "
+            "score only missing pairs."
+        ),
+    )
+    parser.add_argument(
+        "--llm-log-path",
+        default=os.getenv("RERANK_LLM_LOG_PATH"),
+        help=(
+            "When set, write a JSONL audit trail of every LLM call (prompt, "
+            "response, latency, errors) to this path."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -64,6 +107,25 @@ def main() -> None:
         candidates=candidates,
     )
     vacancies = load_jsonl(args.vacancies_path)
+    candidate_schema_by_id = load_candidate_schema_map(args.candidates_schema_path)
+    if candidate_schema_by_id:
+        vacancies_by_id = {
+            str(vacancy.get("dataset_id") or vacancy.get("id")): vacancy
+            for vacancy in vacancies
+        }
+        rows = enrich_rows_with_schema_features(
+            rows,
+            candidate_schema_by_id=candidate_schema_by_id,
+            vacancies_by_id=vacancies_by_id,
+        )
+        print(
+            f"Enriched {len(rows)} feature rows with schema features "
+            f"from {args.candidates_schema_path}"
+        )
+    else:
+        print(
+            f"Schema features skipped: no candidate schema found at {args.candidates_schema_path}"
+        )
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
 
@@ -159,6 +221,75 @@ def main() -> None:
     print(f"Scoring concurrency: {max_workers}")
     if max_workers > 1:
         print("Warning: multiple workers can increase provider rate-limit errors.")
+    if args.checkpoint_every < 0:
+        raise ValueError("--checkpoint-every must be >= 0")
+
+    prefilled_rows: list[dict] | None = None
+    missing_positions: list[int] = []
+    rows_for_scoring = rows
+    rewrite_base_rows: list[dict] | None = None
+    output_path = Path(args.output_path)
+    _validate_checkpoint_mode(
+        checkpoint_every=args.checkpoint_every,
+        rewrite_mode=args.rewrite_mode,
+        output_path=output_path,
+    )
+    if args.rewrite_mode:
+        scorable_rows = _filter_rows_with_known_pairs(rows, candidates, vacancies)
+        skipped_rows = len(rows) - len(scorable_rows)
+        if skipped_rows > 0:
+            print(
+                "Rewrite mode: "
+                f"skipping {skipped_rows} rows with missing candidate/vacancy records."
+            )
+        rewrite_base_rows = []
+        if output_path.exists():
+            cached_rows = load_jsonl(output_path)
+            rewrite_base_rows = [dict(row) for row in cached_rows]
+            (
+                prefilled_rows,
+                rows_for_scoring,
+                missing_positions,
+                cache_stats,
+            ) = _prepare_rewrite_rows(
+                rows=scorable_rows,
+                cached_rows=cached_rows,
+                score_fields=DEFAULT_LLM_SCORE_FIELDS,
+            )
+            print(
+                "Rewrite cache: "
+                f"source_rows={cache_stats['cached_source_rows']}, "
+                f"cache_pairs={cache_stats['cache_pairs']}, "
+                f"reused_rows={cache_stats['reused_rows']}, "
+                f"rows_to_score={cache_stats['rows_to_score']}"
+            )
+            print(
+                "Rewrite mode addition: "
+                f"preserving existing {len(rewrite_base_rows)} rows in output."
+            )
+        else:
+            rows_for_scoring = scorable_rows
+            print(
+                "Rewrite mode: cache file not found at "
+                f"{output_path}; scoring all {len(rows_for_scoring)} eligible rows."
+            )
+
+    if args.checkpoint_every > 0:
+        print(
+            "Checkpointing enabled: "
+            f"every {args.checkpoint_every} newly scored rows -> {output_path}"
+        )
+
+    if not rows_for_scoring:
+        if rewrite_base_rows is not None:
+            scored_rows = rewrite_base_rows
+        elif prefilled_rows is None:
+            scored_rows: list[dict] = []
+        else:
+            scored_rows = prefilled_rows
+        _write_jsonl_atomic(scored_rows, output_path)
+        print(f"Saved {len(scored_rows)} scored reranker feature rows to {args.output_path}")
+        return
 
     llm = create_llm(model=resolved_model, api_base=api_base)
     invoke = make_rate_limited_invoker(
@@ -168,14 +299,22 @@ def main() -> None:
         backoff_max_seconds=backoff_max_seconds,
         on_retry=_on_rate_limit_retry,
     )
+    if args.llm_log_path:
+        llm_logger = setup_llm_jsonl_logger(args.llm_log_path)
+        invoke = wrap_invoke_with_logging(
+            invoke,
+            logger=llm_logger,
+            component="rerank_experts",
+        )
+        print(f"LLM call audit trail: {args.llm_log_path}")
     micro_batch_autotune = _env_bool(
         "RERANK_MICRO_BATCH_AUTOTUNE",
         default=(provider.strip().lower() == "ollama" and micro_batch_size > 1),
     )
-    if micro_batch_autotune and micro_batch_size > 1 and rows:
+    if micro_batch_autotune and micro_batch_size > 1 and rows_for_scoring:
         tune_rows = _env_int("RERANK_MICRO_BATCH_TUNE_ROWS", 24)
         tuned_micro_batch_size = autotune_micro_batch_size(
-            rows=rows,
+            rows=rows_for_scoring,
             candidates=candidates,
             vacancies=vacancies,
             llm=llm,
@@ -191,17 +330,68 @@ def main() -> None:
             micro_batch_size = tuned_micro_batch_size
     print(f"Scoring micro-batch size: {micro_batch_size}")
 
-    scored_rows = score_feature_rows_with_experts(
-        rows,
-        candidates,
-        vacancies,
-        llm,
-        invoke=invoke,
-        progress_callback=_print_progress,
-        max_workers=max_workers,
-        micro_batch_size=micro_batch_size,
-    )
-    write_jsonl(scored_rows, args.output_path)
+    captured_scored_rows: list[dict] = []
+
+    def _progress_with_checkpoint(index: int, total: int, scored_row: dict) -> None:
+        _print_progress(index, total, scored_row)
+        captured_scored_rows.append(dict(scored_row))
+        if prefilled_rows is not None:
+            if index > len(missing_positions):
+                raise RuntimeError(
+                    "Rewrite cache merge failed: progress index exceeds missing positions "
+                    f"({index} > {len(missing_positions)})."
+                )
+            prefilled_rows[missing_positions[index - 1]] = dict(scored_row)
+        if args.checkpoint_every > 0 and index % args.checkpoint_every == 0:
+            _save_checkpoint(
+                output_path=output_path,
+                captured_scored_rows=captured_scored_rows,
+                prefilled_rows=prefilled_rows,
+                rewrite_base_rows=rewrite_base_rows,
+                score_fields=DEFAULT_LLM_SCORE_FIELDS,
+            )
+
+    try:
+        scored_subset = score_feature_rows_with_experts(
+            rows_for_scoring,
+            candidates,
+            vacancies,
+            llm,
+            invoke=invoke,
+            progress_callback=_progress_with_checkpoint,
+            max_workers=max_workers,
+            micro_batch_size=micro_batch_size,
+        )
+    except KeyboardInterrupt:
+        if captured_scored_rows:
+            _save_checkpoint(
+                output_path=output_path,
+                captured_scored_rows=captured_scored_rows,
+                prefilled_rows=prefilled_rows,
+                rewrite_base_rows=rewrite_base_rows,
+                score_fields=DEFAULT_LLM_SCORE_FIELDS,
+            )
+            print(
+                "Interrupted: saved partial scored rows to "
+                f"{output_path} ({len(captured_scored_rows)} newly scored this run)."
+            )
+        raise
+
+    if rewrite_base_rows is not None:
+        scored_rows = _merge_rows_additive(rewrite_base_rows, scored_subset)
+    elif prefilled_rows is None:
+        scored_rows = scored_subset
+    else:
+        if len(scored_subset) != len(missing_positions):
+            raise RuntimeError(
+                "Rewrite cache merge failed: scored row count does not match missing positions "
+                f"({len(scored_subset)} vs {len(missing_positions)})."
+            )
+        for index, scored_row in enumerate(scored_subset):
+            prefilled_rows[missing_positions[index]] = scored_row
+        scored_rows = prefilled_rows
+
+    _write_jsonl_atomic(scored_rows, output_path)
     print(f"Saved {len(scored_rows)} scored reranker feature rows to {args.output_path}")
 
 
@@ -280,6 +470,152 @@ def _print_progress(index: int, total: int, row: dict) -> None:
             f"[progress] {index}/{total} rows scored "
             f"(candidate_id={row.get('candidate_id')}, vacancy_id={row.get('vacancy_id')})"
         )
+
+
+def _pair_key(row: dict) -> tuple[str, str] | None:
+    candidate_id = row.get("candidate_id")
+    vacancy_id = row.get("vacancy_id")
+    if candidate_id is None or vacancy_id is None:
+        return None
+    return str(candidate_id), str(vacancy_id)
+
+
+def _has_score_fields(row: dict, score_fields: tuple[str, ...]) -> bool:
+    for field in score_fields:
+        if field not in row:
+            return False
+        try:
+            float(row[field])
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _prepare_rewrite_rows(
+    *,
+    rows: list[dict],
+    cached_rows: list[dict],
+    score_fields: tuple[str, ...],
+) -> tuple[list[dict], list[dict], list[int], dict[str, int]]:
+    cached_by_pair: dict[tuple[str, str], dict] = {}
+    for cached_row in cached_rows:
+        pair_key = _pair_key(cached_row)
+        if pair_key is None or pair_key in cached_by_pair:
+            continue
+        if _has_score_fields(cached_row, score_fields):
+            cached_by_pair[pair_key] = cached_row
+
+    merged_rows: list[dict] = []
+    rows_to_score: list[dict] = []
+    missing_positions: list[int] = []
+    for row in rows:
+        pair_key = _pair_key(row)
+        cached_row = cached_by_pair.get(pair_key) if pair_key is not None else None
+        if cached_row is None:
+            missing_positions.append(len(merged_rows))
+            merged_rows.append(dict(row))
+            rows_to_score.append(dict(row))
+            continue
+
+        merged_row = dict(row)
+        for field in score_fields:
+            merged_row[field] = float(cached_row[field])
+        merged_rows.append(merged_row)
+
+    stats = {
+        "cached_source_rows": len(cached_rows),
+        "cache_pairs": len(cached_by_pair),
+        "reused_rows": len(merged_rows) - len(rows_to_score),
+        "rows_to_score": len(rows_to_score),
+    }
+    return merged_rows, rows_to_score, missing_positions, stats
+
+
+def _filter_rows_with_known_pairs(
+    rows: list[dict],
+    candidates: list[dict],
+    vacancies: list[dict],
+) -> list[dict]:
+    candidates_by_id = {candidate.get("id"): candidate for candidate in candidates}
+    vacancies_by_id = {
+        str(vacancy.get("dataset_id") or vacancy.get("id")): vacancy for vacancy in vacancies
+    }
+    scorable_rows: list[dict] = []
+    for row in rows:
+        candidate = candidates_by_id.get(row.get("candidate_id"))
+        vacancy = vacancies_by_id.get(str(row.get("vacancy_id")))
+        if candidate is None or vacancy is None:
+            continue
+        scorable_rows.append(dict(row))
+    return scorable_rows
+
+
+def _rows_with_scores(rows: list[dict], score_fields: tuple[str, ...]) -> list[dict]:
+    return [dict(row) for row in rows if _has_score_fields(row, score_fields)]
+
+
+def _validate_checkpoint_mode(
+    *,
+    checkpoint_every: int,
+    rewrite_mode: bool,
+    output_path: Path,
+) -> None:
+    if checkpoint_every <= 0 or rewrite_mode:
+        return
+    if output_path.exists():
+        raise ValueError(
+            "--checkpoint-every with an existing --output-path requires --rewrite-mode "
+            "to avoid overwriting previous scored rows."
+        )
+
+
+def _write_jsonl_atomic(items: list[dict], output_path: Path) -> None:
+    temp_path = output_path.with_suffix(f"{output_path.suffix}.tmp")
+    write_jsonl(items, temp_path)
+    temp_path.replace(output_path)
+
+
+def _merge_rows_additive(base_rows: list[dict], additions: list[dict]) -> list[dict]:
+    merged_rows = [dict(row) for row in base_rows]
+    index_by_pair: dict[tuple[str, str], int] = {}
+    for index, row in enumerate(merged_rows):
+        pair_key = _pair_key(row)
+        if pair_key is None or pair_key in index_by_pair:
+            continue
+        index_by_pair[pair_key] = index
+
+    for row in additions:
+        pair_key = _pair_key(row)
+        row_copy = dict(row)
+        if pair_key is None:
+            merged_rows.append(row_copy)
+            continue
+        existing_index = index_by_pair.get(pair_key)
+        if existing_index is None:
+            index_by_pair[pair_key] = len(merged_rows)
+            merged_rows.append(row_copy)
+            continue
+        merged_rows[existing_index] = row_copy
+
+    return merged_rows
+
+
+def _save_checkpoint(
+    *,
+    output_path: Path,
+    captured_scored_rows: list[dict],
+    prefilled_rows: list[dict] | None,
+    rewrite_base_rows: list[dict] | None,
+    score_fields: tuple[str, ...],
+) -> None:
+    if rewrite_base_rows is not None:
+        rows_to_persist = _merge_rows_additive(rewrite_base_rows, captured_scored_rows)
+    elif prefilled_rows is not None:
+        rows_to_persist = _rows_with_scores(prefilled_rows, score_fields)
+    else:
+        rows_to_persist = list(captured_scored_rows)
+    _write_jsonl_atomic(rows_to_persist, output_path)
+    print(f"Checkpoint saved: {len(rows_to_persist)} rows -> {output_path}")
 
 
 def _on_rate_limit_retry(attempt: int, wait_seconds: float, exc: Exception) -> None:

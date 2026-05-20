@@ -1,0 +1,34 @@
+# Project configuration. Module-level constants in
+# `src/sara_retrieve_rerank/config.py` read from this file at import time.
+# Any unset key falls back to the in-code default, so this file is fully
+# optional. Paths are interpreted relative to the project root.
+
+paths:
+  candidates: data/raw/results_5000_scores_acknowledged.jsonl
+  candidates_schema: data/raw/candidates_with_schema.jsonl
+  vacancies: data/raw/vacancies_safe_ml_dataset_nozip.jsonl
+  matches_output: data/processed/candidate_vacancy_matches_top20.jsonl
+  rerank_features_output: data/processed/rerank_features_top20.jsonl
+  scored_rerank_features_output: data/processed/rerank_features_scored_top20.jsonl
+  lambdarank_train_rows_output: data/processed/lambdarank_train_rows_top20.jsonl
+  lambdarank_validation_rows_output: data/processed/lambdarank_validation_rows_top20.jsonl
+  lambdarank_validation_scored_output: data/processed/lambdarank_validation_scored_top20.jsonl
+  lambdarank_model_output: outputs/lambdarank_model_top20.pkl
+  chroma_directory: data/chroma
+
+retrieval:
+  embedding_model: all-MiniLM-L6-v2
+  collection_name: vacancy_retriever
+  hnsw_space: cosine
+  top_k: 20
+  batch_size: 2000
+  eval_ks: [1, 5, 10, 20, 50, 100]
+
+reranking:
+  train_max_negatives_per_candidate: 4
+  validation_max_negatives_per_candidate: 19
+  scoring_validation_fraction: 0.2
+
+llm:
+  model: mistral/mistral-small-latest
+  provider: litellm
