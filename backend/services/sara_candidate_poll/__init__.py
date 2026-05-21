@@ -2,7 +2,6 @@
 
 from .models import (
     CandidateDescription,
-    CompanyPreference,
     CompensationPreference,
     EmploymentType,
     JobAndCandidateDescription,
@@ -16,7 +15,6 @@ __all__ = [
     "JobAndCandidateDescription",
     "CandidateDescription",
     "JobDescription",
-    "CompanyPreference",
     "CompensationPreference",
     "WorkModePreference",
     "EmploymentType",

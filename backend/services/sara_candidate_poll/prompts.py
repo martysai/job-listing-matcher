@@ -28,6 +28,18 @@ Two top-level models split the output:
   candidate_description — factual, stable information ABOUT the candidate
   job_description       — what the candidate IS LOOKING FOR in a new role
 
+──────────────────────
+Resume vs. free-text input
+──────────────────────
+The input may be a structured resume (past-oriented) or a free-text message
+expressing intent. Regardless of format:
+  - candidate_description fields are populated from the full text.
+  - job_description fields require an explicit forward-looking signal (desire,
+    intent, preference). A resume section titled "Objective" or "Target role"
+    counts as such a signal; experience and skills sections do NOT.
+  - If no forward-looking signal is found, all job_description list fields
+    remain [] and optional fields remain null.
+
 """
 
 _CANDIDATE_DESCRIPTION = """
@@ -425,60 +437,112 @@ Output: { "preferred_activities": [] }
 
 ----- job_description.preferred_companies -----
 
-A list of CompanyPreference objects. Each object captures a desired industry /
-sector / place-type AND/OR a desired location for the job.
+A flat list of preferred industries, sectors, or types of organisations.
+Named companies (e.g. "Google", "Tesla") are discarded silently.
+Geographic preferences go to preferred_locations or excluded_locations, not here.
 
-Named companies (e.g. "Google", "Tesla") are NOT stored here — they belong
-nowhere in this schema; discard them silently.
-
-CompanyPreference fields:
-  industry  — preferred industry, sector, or concrete place type
-              (e.g. "fintech", "healthcare", "gas station", "pharmacy")
-  location  — preferred geographic location for the job
-              (city, country, or region)
-
-When to create multiple objects:
-  Create one CompanyPreference per distinct (industry, location) pairing the
-  user describes. If the user gives two industries with no location constraint,
-  create two objects each with location=null.
+Valid values: any sector, industry, or organisation type the candidate
+mentions (e.g. "fintech", "healthcare", "startup", "consulting", "NGO").
 
 Algorithm:
-  Step 1: Detect all desired industry / sector / place-type mentions.
-  Step 2: Detect all desired location mentions.
-  Step 3: Pair them if the user links them; otherwise create separate objects.
-  Step 4: Discard named companies entirely.
-  Step 5: If nothing qualifies → [].
+  Step 1: Detect all desired industry / sector / organisation-type mentions.
+  Step 2: Collect them into a flat list of strings.
+  Step 3: Discard named companies entirely.
+  Step 4: If no industries mentioned → [].
 
 ──────────────────────
 CoT example
 ──────────────────────
-Input: "I want to work at Google or at a gas station. Preferably in Berlin."
-  Named companies → Google → discard
-  Place type → "gas station" → industry = "gas station"
-  Location → "Berlin" → location = "Berlin"
-  User links the gas station preference to Berlin → one object
-  → preferred_companies = [{ "industry": "gas station", "location": "Berlin" }]
+Input: "I want to work at Google or at a startup in the fintech or healthtech space."
+  "Google" → named company → discard
+  "startup" → organisation type → include
+  "fintech" → industry → include
+  "healthtech" → industry → include
+  → preferred_companies = ["startup", "fintech", "healthtech"]
 
 ──────────────────────
 Few-shots
 ──────────────────────
 Input: "Looking for jobs in fintech or healthcare."
-Output: {
-  "preferred_companies": [
-    { "industry": "fintech", "location": null },
-    { "industry": "healthcare", "location": null }
-  ]
-}
+Output: { "preferred_companies": ["fintech", "healthcare"] }
 
 Input: "I want a role in pharma, ideally in Zurich."
-Output: {
-  "preferred_companies": [
-    { "industry": "pharma", "location": "Zurich" }
-  ]
-}
+Output: { "preferred_companies": ["pharma"] }
+Note: Zurich → preferred_locations, not here.
+
+Input: "I want to work in Berlin."
+Output: { "preferred_companies": [] }
+Note: Berlin is a location → preferred_locations. No industry stated.
 
 Input: "Interested in working at Netflix or Spotify."
 Output: { "preferred_companies": [] }
+Note: Named companies are discarded; no industry stated.
+
+
+----- job_description.preferred_locations -----
+
+List of geographic locations (cities, countries, regions) the candidate
+explicitly prefers for their job.
+
+Valid triggers:
+  "I want to work in Berlin"
+  "targeting companies in the EU"
+  "looking for opportunities in London or Amsterdam"
+  "open to relocation to Germany or the Netherlands"
+
+Invalid triggers:
+  Industry / sector mentions → preferred_companies
+  Remote work format → preferred_work_mode.preferred_remote_policy
+
+Algorithm:
+  Step 1: Detect all preferred geographic location mentions.
+  Step 2: Collect as a flat list of strings in the user's wording.
+  Step 3: If none → [].
+
+──────────────────────
+Few-shots
+──────────────────────
+Input: "I want to work in fintech, ideally based in Berlin."
+Output: { "preferred_locations": ["Berlin"] }
+
+Input: "Open to roles in Germany or the Netherlands."
+Output: { "preferred_locations": ["Germany", "Netherlands"] }
+
+Input: "Looking for remote work, no location preference."
+Output: { "preferred_locations": [] }
+
+
+----- job_description.excluded_locations -----
+
+List of geographic locations, regions, or timezone constraints the candidate
+explicitly wants to avoid.
+
+Valid triggers:
+  "not considering jobs in Russia"
+  "no US-only companies due to timezone"
+  "prefer not to relocate to Asia"
+  "avoiding countries without EU data residency"
+
+Invalid triggers:
+  Preferences for where to work → preferred_locations
+  Remote work mode exclusions → preferred_work_mode.excluded_remote_policy
+
+Algorithm:
+  Step 1: Detect all explicitly excluded locations, regions, or timezone constraints.
+  Step 2: Collect as a flat list of strings in the user's wording.
+  Step 3: If none → [].
+
+──────────────────────
+Few-shots
+──────────────────────
+Input: "Open to remote work worldwide, but not considering jobs in Russia or Belarus."
+Output: { "excluded_locations": ["Russia", "Belarus"] }
+
+Input: "Not interested in US-only companies due to timezone incompatibility."
+Output: { "excluded_locations": ["US (timezone)"] }
+
+Input: "Open to any location."
+Output: { "excluded_locations": [] }
 
 
 ----- job_description.desired_compensation_monthly.salary_min / salary_max -----
@@ -506,14 +570,12 @@ Algorithm:
 ──────────────────────
 CoT example
 ──────────────────────
-Input: "salary 300 thousand rubles per second"
-  Detect numeric → 300,000
-  Period → "per second" — treat as literal, not an error
-  Conversion: 300,000 RUB/sec × 60 sec × 60 min × 24 hr × 30 days = 777,600,000,000 RUB/month
-  → salary_min = 777600000000, salary_max = null, currency = "RUB"
-
-  Note: when a pay period is physically valid but unusual, compute it exactly.
-  Do NOT substitute a "more reasonable" period — use what the user stated.
+Input: "Looking for at least $50 per hour."
+  Detect numeric → 50
+  Currency → "$" → "USD"
+  Period → "per hour" → multiply by 22 days × 8 hours = 176
+  50 × 176 = 8,800
+  → salary_min = 8800, salary_max = null, currency = "USD"
 
 ──────────────────────
 Few-shots
@@ -665,74 +727,64 @@ Output: { "employment_type": ["part_time"] }
 
 
 ----- job_description.preferred_work_mode.preferred_remote_policy -----
------ job_description.preferred_work_mode.acceptable_remote_policy -----
+----- job_description.preferred_work_mode.excluded_remote_policy  -----
 
-Both fields are lists drawn from the set: ["remote", "hybrid", "onsite"].
+Both fields draw from: ["remote", "hybrid", "onsite"].
 
-preferred_remote_policy  — what the user explicitly wants most.
-acceptable_remote_policy — what the user explicitly states they are willing to
-                           accept, excluding any values already in preferred.
+preferred_remote_policy — what the candidate explicitly wants.
+excluded_remote_policy  — what the candidate explicitly does NOT want.
+Everything not in either field is implicitly acceptable.
 
 Core invariant:
-  acceptable_remote_policy must never contain a value that is in preferred_remote_policy.
-  If the user mentions a mode only once with no preference signal → it goes into
-  acceptable only.
+  excluded_remote_policy must never contain a value in preferred_remote_policy.
+
+Signals for preferred : "prefer", "love", "want", "ideally", "only", "must be"
+Signals for excluded  : "don't want", "not interested in", "no X",
+                        "avoid", "not considering", "never"
 
 Algorithm:
   Step 1: Detect all remote-policy mentions.
   Step 2: Classify each mention:
-      A) Explicit preference signal ("prefer", "love", "want", "ideally") → preferred
-      B) Explicit tolerance signal ("open to", "fine with", "could do", "okay with") → acceptable
-      C) No signal, single mention → acceptable
-  Step 3: Remove from acceptable any value already present in preferred.
-  Step 4: If no mentions at all → both lists = [].
-  Step 5: Preserve canonical order within each list: remote → hybrid → onsite.
+      A) Preference signal → preferred_remote_policy
+      B) Exclusion signal  → excluded_remote_policy
+      C) No clear signal, single mention → preferred_remote_policy
+  Step 3: Remove from excluded any value already in preferred.
+  Step 4: If no mentions → both = [].
+  Step 5: Canonical order within each list: remote → hybrid → onsite.
 
 Special cases:
-  "only X" / "must be X" / "exclusively X" → preferred = ["X"], acceptable = []
-  "doesn't matter" / "any work mode"       → preferred = [], acceptable = ["remote","hybrid","onsite"]
+  "only X"           → preferred=["X"], excluded=[]
+  "doesn't matter"   → preferred=[], excluded=[]
+  "any work mode"    → preferred=[], excluded=[]
 
 Mapping:
-  "work from home", "WFH", "fully remote", "remote-first" → "remote"
-  "office 2–3 days", "partly remote", "mixed"             → "hybrid"
-  "on-site", "in-office", "no remote"                     → "onsite"
+  "WFH", "fully remote", "remote-first" → "remote"
+  "office 2–3 days", "partly remote"    → "hybrid"
+  "on-site", "in-office", "no remote"   → "onsite"
 
 ──────────────────────
 CoT example
 ──────────────────────
-Input: "I prefer to work fully remotely, but I could do hybrid if needed."
-  "fully remotely" + "prefer" signal → preferred = ["remote"]
-  "could do hybrid" → tolerance signal → candidate for acceptable
-  "hybrid" not in preferred → keep in acceptable
-  → preferred_remote_policy  = ["remote"]
-  → acceptable_remote_policy = ["hybrid"]
+Input: "I prefer to work fully remotely. Onsite is not an option for me."
+  "fully remotely" + "prefer" → preferred = ["remote"]
+  "Onsite is not an option" → exclusion signal → excluded = ["onsite"]
+  → preferred_remote_policy = ["remote"]
+  → excluded_remote_policy  = ["onsite"]
 
 ──────────────────────
 Few-shots
 ──────────────────────
 Input: "Only interested in remote positions."
-Output: {
-  "preferred_remote_policy":  ["remote"],
-  "acceptable_remote_policy": []
-}
+Output: { "preferred_remote_policy": ["remote"], "excluded_remote_policy": [] }
 
-Input: "I'd love remote, and I'm open to hybrid or onsite too."
-Output: {
-  "preferred_remote_policy":  ["remote"],
-  "acceptable_remote_policy": ["hybrid", "onsite"]
-}
+Input: "I prefer remote work. No onsite, please."
+Output: { "preferred_remote_policy": ["remote"], "excluded_remote_policy": ["onsite"] }
 
-Input: "Looking for a hybrid or onsite role."
-Output: {
-  "preferred_remote_policy":  [],
-  "acceptable_remote_policy": ["hybrid", "onsite"]
-}
+Input: "Looking for a hybrid or remote role, not interested in fully onsite."
+Output: { "preferred_remote_policy": ["remote", "hybrid"], "excluded_remote_policy": ["onsite"] }
 
 Input: "Office, remote, doesn't matter to me."
-Output: {
-  "preferred_remote_policy":  [],
-  "acceptable_remote_policy": ["remote", "hybrid", "onsite"]
-}
+Output: { "preferred_remote_policy": [], "excluded_remote_policy": [] }
 
 """
 
@@ -751,17 +803,13 @@ No extra keys, no markdown, no explanation.
     "skills":           <List[str]>
   },
   "job_description": {
-    "desired_positions":   <List[str]>,
-    "desired_tech_stack":  <List[str]>,
-    "preferred_domains":   <List[str]>,
+    "desired_positions":    <List[str]>,
+    "desired_tech_stack":   <List[str]>,
+    "preferred_domains":    <List[str]>,
     "preferred_activities": <List[str]>,
-    "preferred_companies": [
-      {
-        "industry": <str|null>,
-        "location": <str|null>
-      },
-      ...
-    ],
+    "preferred_companies":  <List[str]>,
+    "preferred_locations":  <List[str]>,
+    "excluded_locations":   <List[str]>,
     "desired_compensation_monthly": {
       "salary_min": <int|null>,
       "salary_max": <int|null>,
@@ -770,9 +818,9 @@ No extra keys, no markdown, no explanation.
       "benefits":   <List[str]>
     } | null,
     "preferred_work_mode": {
-      "employment_type":          <List["full_time"|"part_time"|"contract"|"fixed_term"|"freelance"|"internship"|"temporary"|"self_employed"]>,
-      "preferred_remote_policy":  <List["remote"|"hybrid"|"onsite"]>,
-      "acceptable_remote_policy": <List["remote"|"hybrid"|"onsite"]>
+      "employment_type":         <List["full_time"|"part_time"|"contract"|"fixed_term"|"freelance"|"internship"|"temporary"|"self_employed"]>,
+      "preferred_remote_policy": <List["remote"|"hybrid"|"onsite"]>,
+      "excluded_remote_policy":  <List["remote"|"hybrid"|"onsite"]>
     } | null
   }
 }
@@ -782,10 +830,11 @@ Constraints:
   - All List fields default to [] when nothing is extracted.
   - desired_compensation_monthly is null when no salary or benefits are mentioned.
   - preferred_work_mode is null when no employment type or remote policy is mentioned.
-  - acceptable_remote_policy never contains a value already in preferred_remote_policy.
+  - excluded_remote_policy never contains a value already in preferred_remote_policy.
   - employment_type values must be from the EmploymentType enum exactly as listed.
   - currency must be a 3-letter ISO 4217 code ("USD", "EUR", "RUB", "GBP", etc.) or null.
-  - preferred_companies is [] when no industry or location preference is mentioned.
+  - preferred_companies is [] when no industry or organisation-type preference is mentioned.
+  - preferred_locations and excluded_locations are [] when no geographic preference is mentioned.
 """
 
 

@@ -9,7 +9,7 @@ load_dotenv()
 
 T = TypeVar("T", bound=BaseModel)
 
-_DEFAULT_MODEL = "mistral-small-latest"
+_DEFAULT_MODEL = "mistral-large-latest"
 
 
 def _get_client() -> Mistral:

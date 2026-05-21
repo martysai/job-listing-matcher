@@ -37,17 +37,6 @@ class CandidateDescription(BaseModel):
     )
 
 
-class CompanyPreference(BaseModel):
-    industry: Optional[str] = Field(
-        default=None,
-        description="Preferred industry or sector (e.g. fintech, healthcare)",
-    )
-    location: Optional[str] = Field(
-        default=None,
-        description="Preferred company or job location",
-    )
-
-
 class CompensationPreference(BaseModel):
     salary_min: Optional[int] = Field(
         default=None,
@@ -79,9 +68,13 @@ class WorkModePreference(BaseModel):
         default_factory=list,
         description="Preferred work mode: remote, hybrid, onsite",
     )
-    acceptable_remote_policy: List[str] = Field(
+    excluded_remote_policy: List[str] = Field(
         default_factory=list,
-        description="Acceptable work modes (remote, hybrid, onsite)",
+        description=(
+            "Remote work formats the candidate explicitly does not want. "
+            "Values: 'remote' | 'hybrid' | 'onsite'. "
+            "Must not overlap with preferred_remote_policy."
+        ),
     )
 
 
@@ -94,10 +87,9 @@ class JobDescription(BaseModel):
         default_factory=list,
         description="Desired job titles or role names",
     )
-    # This will likely rarely be used, but can provide better accuracy for certain candidates.
     desired_tech_stack: List[str] = Field(
         default_factory=list,
-        description="Technologies the candidate wants to work with",
+        description="Technologies the candidate wants to work with at the new job",
     )
     preferred_domains: List[str] = Field(
         default_factory=list,
@@ -107,9 +99,26 @@ class JobDescription(BaseModel):
         default_factory=list,
         description="Activities or responsibilities the candidate wants to perform",
     )
-    preferred_companies: List[CompanyPreference] = Field(
+    preferred_companies: List[str] = Field(
         default_factory=list,
-        description="Target industries, locations, or specific companies",
+        description=(
+            "Preferred industries, sectors, or types of organisations "
+            "(e.g. 'fintech', 'healthcare', 'startup'). Named companies are discarded."
+        ),
+    )
+    preferred_locations: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Geographic locations (cities, countries, regions) the candidate "
+            "explicitly prefers for their job (e.g. 'Berlin', 'Germany', 'EU')."
+        ),
+    )
+    excluded_locations: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Geographic locations, regions, or timezone constraints the candidate "
+            "explicitly wants to avoid (e.g. 'Russia', 'Belarus', 'US (timezone)')."
+        ),
     )
     desired_compensation_monthly: Optional[CompensationPreference] = Field(
         default=None,
