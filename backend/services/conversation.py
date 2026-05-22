@@ -76,7 +76,7 @@ def _stream_worker(
     try:
         with client.chat.stream(model=model, messages=messages) as stream:
             for chunk in stream:
-                delta = chunk.choices[0].delta.content
+                delta = chunk.data.choices[0].delta.content
                 if delta:
                     q.put(delta)
     finally:
