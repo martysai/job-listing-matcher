@@ -2,9 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageBubble } from "./components/MessageBubble";
 import { ChatInput } from "./components/ChatInput";
 import { JobResults } from "./components/JobResults";
+import { Login } from "./components/Login";
+import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
 
 export default function App() {
+  const { authed, login } = useAuth();
+
+  if (authed === null) return null; // checking session
+  if (!authed) return <Login onLogin={login} />;
+
+  return <AppShell />;
+}
+
+function AppShell() {
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [showJobs, setShowJobs] = useState(false);
