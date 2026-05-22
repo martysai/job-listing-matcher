@@ -1,9 +1,11 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import aiosqlite
 
-DB_PATH = os.environ.get("DB_PATH", "chat.db")
+_DEFAULT_DB = str(Path(__file__).parent.parent.parent / "data/chat.db")
+DB_PATH = os.environ.get("DB_PATH", _DEFAULT_DB)
 
 DDL = """
 CREATE TABLE IF NOT EXISTS sessions (

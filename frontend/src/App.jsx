@@ -9,6 +9,7 @@ export default function App() {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [showJobs, setShowJobs] = useState(false);
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
   const handleSearching = useCallback(() => {
     setShowJobs(true);
@@ -39,6 +40,18 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Keep scroll pinned to bottom during the panel-open layout transition
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (gap < 150) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div
@@ -127,7 +140,7 @@ export default function App() {
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 8px" }}>
+        <div ref={messagesContainerRef} style={{ flex: 1, overflowY: "auto", padding: "20px 20px 8px" }}>
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}

@@ -1,14 +1,27 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+
+// 5 lines × (fontSize × lineHeight) + top/bottom padding
+const MAX_HEIGHT = Math.round(5 * 15 * 1.5) + 20; // 132px
 
 export function ChatInput({ onSend, disabled }) {
   const [value, setValue] = useState("");
+  const textareaRef = useRef(null);
 
   const handleSubmit = () => {
     const text = value.trim();
     if (!text || disabled) return;
     onSend(text);
     setValue("");
+    textareaRef.current?.focus();
   };
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`;
+    el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? "auto" : "hidden";
+  }, [value]);
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -21,6 +34,7 @@ export function ChatInput({ onSend, disabled }) {
     <div
       style={{
         display: "flex",
+        alignItems: "flex-end",
         gap: 10,
         padding: "16px 20px",
         borderTop: "1px solid var(--border)",
@@ -28,6 +42,7 @@ export function ChatInput({ onSend, disabled }) {
       }}
     >
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -37,6 +52,7 @@ export function ChatInput({ onSend, disabled }) {
         style={{
           flex: 1,
           resize: "none",
+          overflowY: "hidden",
           border: "1px solid var(--border)",
           borderRadius: 12,
           padding: "10px 14px",

@@ -105,7 +105,7 @@ export function useChat({ onSearching, onJobsReceived }) {
               const id = crypto.randomUUID();
               searchMsgIdRef.current = id;
               setMessages((prev) => [
-                ...prev,
+                ...prev.filter((m) => m.id !== assistantId),
                 { id, role: "assistant", content: SEARCH_TEXT },
               ]);
               onSearching();

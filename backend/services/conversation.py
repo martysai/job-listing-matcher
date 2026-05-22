@@ -58,7 +58,7 @@ COMPLETION SIGNAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Once you have gathered at minimum: desired role, current skills or desired tech stack,
 and either a preferred location or a remote-work preference — end your message with the
-exact marker <SEARCH> on its own line. Only emit it once.
+exact marker <SEARCH> on its own line.
 """
 
 _DEFAULT_MODEL = "mistral-small-latest"
