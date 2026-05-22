@@ -1,7 +1,7 @@
 import { JobCard } from "./JobCard";
 
-export function JobResults({ jobs, isLoading, error }) {
-  if (isLoading) {
+export function JobResults({ jobs, isLoading }) {
+  if (isLoading && jobs.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)" }}>
         <div style={{ fontSize: 28, marginBottom: 12, animation: "spin 1.5s linear infinite", display: "inline-block" }}>⟳</div>
@@ -10,33 +10,45 @@ export function JobResults({ jobs, isLoading, error }) {
     );
   }
 
-  if (error) {
-    return (
-      <div style={{ padding: 24, color: "#dc2626", fontSize: 14 }}>
-        Error fetching jobs: {error}
-      </div>
-    );
-  }
-
   if (jobs.length === 0) return null;
 
   return (
-    <div style={{ padding: "20px 20px 8px" }}>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          color: "var(--accent)",
-          marginBottom: 16,
-        }}
-      >
-        {jobs.length} matches found
+    <div style={{ position: "relative" }}>
+      {isLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div style={{ position: "absolute", inset: 0, background: "var(--surface)", opacity: 0.85 }} />
+          <div style={{ position: "relative", textAlign: "center", color: "var(--text-secondary)" }}>
+            <div style={{ fontSize: 28, marginBottom: 8, animation: "spin 1.5s linear infinite", display: "inline-block" }}>⟳</div>
+            <div>Updating results…</div>
+          </div>
+        </div>
+      )}
+      <div style={{ padding: "20px 20px 8px" }}>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: "var(--accent)",
+            marginBottom: 16,
+          }}
+        >
+          {jobs.length} matches found
+        </div>
+        {jobs.map((job, i) => (
+          <JobCard key={job.id} job={job} index={i} />
+        ))}
       </div>
-      {jobs.map((job, i) => (
-        <JobCard key={job.id} job={job} index={i} />
-      ))}
     </div>
   );
 }

@@ -3,28 +3,33 @@ import { MessageBubble } from "./components/MessageBubble";
 import { ChatInput } from "./components/ChatInput";
 import { JobResults } from "./components/JobResults";
 import { useChat } from "./hooks/useChat";
-import { useJobs } from "./hooks/useJobs";
 
 export default function App() {
-  const { jobs, fetchJobs, isLoading: jobsLoading, error: jobsError } = useJobs();
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [showJobs, setShowJobs] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const handleReadyToSearch = useCallback(
-    (profile) => {
-      setShowJobs(true);
-      fetchJobs(profile);
-    },
-    [fetchJobs]
-  );
+  const handleSearching = useCallback(() => {
+    setShowJobs(true);
+    setJobsLoading(true);
+  }, []);
+
+  const handleJobsReceived = useCallback((newJobs) => {
+    setJobsLoading(false);
+    setJobs((prev) => [...newJobs, ...prev]);
+  }, []);
 
   const { messages, sendMessage, isStreaming, reset } = useChat({
-    onReadyToSearch: handleReadyToSearch,
+    onSearching: handleSearching,
+    onJobsReceived: handleJobsReceived,
   });
 
   const handleReset = useCallback(() => {
     reset();
     setShowJobs(false);
+    setJobs([]);
+    setJobsLoading(false);
   }, [reset]);
 
   // Auto-scroll to bottom on new messages
@@ -153,7 +158,7 @@ export default function App() {
           >
             Recommended Jobs
           </div>
-          <JobResults jobs={jobs} isLoading={jobsLoading} error={jobsError} />
+          <JobResults jobs={jobs} isLoading={jobsLoading} />
         </div>
       )}
     </div>

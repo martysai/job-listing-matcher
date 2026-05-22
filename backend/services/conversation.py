@@ -2,11 +2,14 @@ import asyncio
 import os
 import queue
 import threading
+import time
 from typing import AsyncGenerator
 
 from mistralai import Mistral
 
 from sara_candidate_poll import parse_job_request
+from services import log_sink
+from services.recommender import RecommenderService
 
 SYSTEM_PROMPT = """You are a friendly job recommendation assistant. Your goal is to understand
 what kind of job the user is looking for by collecting the information below naturally
@@ -55,11 +58,12 @@ COMPLETION SIGNAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Once you have gathered at minimum: desired role, current skills or desired tech stack,
 and either a preferred location or a remote-work preference — end your message with the
-exact marker <COLLECT> on its own line. Only emit it once.
+exact marker <SEARCH> on its own line. Only emit it once.
 """
 
 _DEFAULT_MODEL = "mistral-small-latest"
 _SENTINEL = object()
+_recommender = RecommenderService()
 
 
 def _stream_worker(
@@ -89,8 +93,7 @@ class ConversationService:
         session_id: str,
     ) -> AsyncGenerator[dict, None]:
         text_buffer = ""
-        in_collect = False
-        search_emitted = False
+        in_search = False
 
         q: queue.Queue = queue.Queue()
         full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
@@ -108,16 +111,16 @@ class ConversationService:
             if chunk is _SENTINEL:
                 break
 
-            if in_collect:
+            if in_search:
                 continue
 
             text_buffer += chunk
 
-            if "<COLLECT>" in text_buffer:
-                pre, _ = text_buffer.split("<COLLECT>", 1)
+            if "<SEARCH>" in text_buffer:
+                pre, _ = text_buffer.split("<SEARCH>", 1)
                 if pre:
                     yield {"type": "text", "content": pre}
-                in_collect = True
+                in_search = True
                 text_buffer = ""
             elif len(text_buffer) > 20:
                 safe, text_buffer = text_buffer[:-20], text_buffer[-20:]
@@ -126,11 +129,32 @@ class ConversationService:
         if text_buffer.strip():
             yield {"type": "text", "content": text_buffer}
 
-        if in_collect and not search_emitted:
+        if in_search:
+            yield {"type": "searching"}
             user_text = "\n".join(
                 m["content"] for m in messages if m["role"] == "user"
             )
+            log_sink.append(
+                ts=time.time(),
+                level="info",
+                logger="conversation",
+                component="chat",
+                event="parse_start",
+                session_id=session_id,
+            )
             parsed = await loop.run_in_executor(None, parse_job_request, user_text)
-            yield {"type": "ready_to_search", "profile": parsed.model_dump()}
+            log_sink.append(
+                ts=time.time(),
+                level="info",
+                logger="conversation",
+                component="chat",
+                event="parse_done",
+                session_id=session_id,
+                payload=parsed.model_dump(),
+            )
+            jobs = await _recommender.search(
+                profile=parsed.model_dump(exclude_none=True), top_k=10
+            )
+            yield {"type": "jobs", "jobs": jobs}
 
         yield {"type": "done"}

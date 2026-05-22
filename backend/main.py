@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from routes.chat import router as chat_router
 from routes.history import router as history_router
-from routes.jobs import router as jobs_router
 from routes.logs import router as logs_router
 from services.database import init_db
 from services.log_sink import JsonlHandler
@@ -37,7 +36,6 @@ app.add_middleware(
 
 app.include_router(chat_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
-app.include_router(jobs_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 
 

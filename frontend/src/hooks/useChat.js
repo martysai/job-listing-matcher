@@ -7,6 +7,10 @@ const WELCOME = {
     "Hi! I'm your job search assistant. Tell me what kind of role you're looking for and I'll find the best matches for you. What type of job are you interested in?",
 };
 
+const SEARCH_TEXT = "Searching, please wait...";
+const DONE_TEXT =
+  "Here's what I could find. Message me again if you'd like to change your preferences and repeat the search.";
+
 function getOrCreateSessionId() {
   let id = localStorage.getItem("session_id");
   if (!id) {
@@ -16,11 +20,12 @@ function getOrCreateSessionId() {
   return id;
 }
 
-export function useChat({ onReadyToSearch }) {
+export function useChat({ onSearching, onJobsReceived }) {
   const [sessionId, setSessionId] = useState(getOrCreateSessionId);
   const [messages, setMessages] = useState([WELCOME]);
   const [isStreaming, setIsStreaming] = useState(false);
   const readerRef = useRef(null);
+  const searchMsgIdRef = useRef(null);
 
   // Hydrate from server whenever the session changes
   useEffect(() => {
@@ -96,8 +101,21 @@ export function useChat({ onReadyToSearch }) {
                     : m
                 )
               );
-            } else if (event.type === "ready_to_search") {
-              onReadyToSearch(event.profile);
+            } else if (event.type === "searching") {
+              const id = crypto.randomUUID();
+              searchMsgIdRef.current = id;
+              setMessages((prev) => [
+                ...prev,
+                { id, role: "assistant", content: SEARCH_TEXT },
+              ]);
+              onSearching();
+            } else if (event.type === "jobs") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === searchMsgIdRef.current ? { ...m, content: DONE_TEXT } : m
+                )
+              );
+              onJobsReceived(event.jobs);
             }
           }
         }
@@ -116,7 +134,7 @@ export function useChat({ onReadyToSearch }) {
         readerRef.current = null;
       }
     },
-    [messages, isStreaming, onReadyToSearch, sessionId]
+    [messages, isStreaming, onSearching, onJobsReceived, sessionId]
   );
 
   const cancelStream = useCallback(() => {
