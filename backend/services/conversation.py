@@ -5,7 +5,7 @@ import threading
 import time
 from typing import AsyncGenerator
 
-from mistralai import Mistral
+from mistralai.client import Mistral
 
 from sara_candidate_poll import parse_job_request
 from services import log_sink
@@ -76,7 +76,7 @@ def _stream_worker(
     try:
         with client.chat.stream(model=model, messages=messages) as stream:
             for chunk in stream:
-                delta = chunk.data.choices[0].delta.content
+                delta = chunk.choices[0].delta.content
                 if delta:
                     q.put(delta)
     finally:

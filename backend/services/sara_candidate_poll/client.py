@@ -2,7 +2,7 @@ import os
 from typing import Type, TypeVar
 
 from dotenv import load_dotenv
-from mistralai import Mistral
+from mistralai.client import Mistral
 from pydantic import BaseModel
 
 load_dotenv()

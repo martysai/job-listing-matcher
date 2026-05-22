@@ -4,24 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "job-listing-matcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "Job matching service: retrieve, rerank, and recommend vacancies."
 requires-python = ">=3.10"
 dependencies = [
     # Shared across backend server, adzuna scheduler, and dev
-    "langchain-core",
+    "langchain==1.2.13",
+    "langchain-core==1.2.22",
     "langchain-chroma",
     "langchain-huggingface",
     "langchain-community",
     "langchain-litellm",
+    "langchain-mistralai==1.1.2",
     "sentence-transformers",
     "rank-bm25",
     "langgraph",
     "litellm",
     "anthropic",
-    "mistralai",
-    "pydantic>=2.0",
-    "python-dotenv",
+    "mistralai==2.1.3",
+    "pydantic==2.12.5",
+    "python-dotenv==1.2.2",
     "beautifulsoup4",
     "lxml",
     "requests",
