@@ -16,7 +16,7 @@ export function JobCard({ job, index, isNew = true }) {
         marginBottom: 12,
         boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
         border: "1px solid var(--border)",
-        opacity: isNew ? 1 : 0.7,
+        opacity: isNew ? 1 : 0.5,
         transition: "transform 0.15s ease, box-shadow 0.15s ease",
         animationDelay: `${index * 60}ms`,
         animationName: "slideIn",
