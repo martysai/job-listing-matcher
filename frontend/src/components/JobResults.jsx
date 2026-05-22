@@ -1,5 +1,28 @@
 import { JobCard } from "./JobCard";
 
+function StatusLine({ jobs }) {
+  const newCount = jobs.filter((j) => j.isNew).length;
+  const total = jobs.length;
+  if (newCount === 0) return null;
+  const text =
+    total > newCount
+      ? `${newCount} new vacancies found, ${total} total.`
+      : `${newCount} new vacancies found.`;
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        paddingBottom: 12,
+        fontSize: 12,
+        color: "var(--text-secondary)",
+        opacity: 0.7,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 export function JobResults({ jobs, isLoading }) {
   if (isLoading && jobs.length === 0) {
     return (
@@ -46,8 +69,9 @@ export function JobResults({ jobs, isLoading }) {
           {jobs.length} matches found
         </div>
         {jobs.map((job, i) => (
-          <JobCard key={job.id} job={job} index={i} />
+          <JobCard key={job.id} job={job} index={i} isNew={job.isNew} />
         ))}
+        <StatusLine jobs={jobs} />
       </div>
     </div>
   );

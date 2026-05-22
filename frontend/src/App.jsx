@@ -17,7 +17,10 @@ export default function App() {
 
   const handleJobsReceived = useCallback((newJobs) => {
     setJobsLoading(false);
-    setJobs((prev) => [...newJobs, ...prev]);
+    setJobs((prev) => [
+      ...newJobs.map((j) => ({ ...j, isNew: true })),
+      ...prev.map((j) => ({ ...j, isNew: false })),
+    ]);
   }, []);
 
   const { messages, sendMessage, isStreaming, reset } = useChat({

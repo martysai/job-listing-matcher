@@ -1,4 +1,4 @@
-export function JobCard({ job, index }) {
+export function JobCard({ job, index, isNew = true }) {
   const score = Math.round(job.match_score * 100);
 
   return (
@@ -16,6 +16,7 @@ export function JobCard({ job, index }) {
         marginBottom: 12,
         boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
         border: "1px solid var(--border)",
+        opacity: isNew ? 1 : 0.7,
         transition: "transform 0.15s ease, box-shadow 0.15s ease",
         animationDelay: `${index * 60}ms`,
         animationName: "slideIn",
