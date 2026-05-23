@@ -1,6 +1,6 @@
 # Adzuna Vacancy Refresh Agent
 
-The `sara_retrieve_rerank.adzuna` subpackage is a scheduled agent that keeps the Chroma vacancy index up to date by scraping fresh job listings from the [Adzuna API](https://developer.adzuna.com/docs/). It runs independently of the live candidate request path and has no impact on it.
+The `backend.services.adzuna` subpackage is a scheduled agent that keeps the Chroma vacancy index up to date by scraping fresh job listings from the [Adzuna API](https://developer.adzuna.com/docs/). It runs independently of the live candidate request path and has no impact on it.
 
 ---
 
@@ -66,7 +66,7 @@ During **cold start** (fewer than 10 events in the last 7 days) a fixed set of `
 ## File structure
 
 ```
-sara_retrieve_rerank/adzuna/
+backend/services/adzuna/
 ├── __init__.py       Package public API
 ├── config.py         Constants, env vars, AdzunaQuery dataclass, mapping tables
 ├── counter.py        ProfileCounter, QueryBuilder, ADZUNA_CATEGORIES, mappings
@@ -84,8 +84,8 @@ sara_retrieve_rerank/adzuna/
 The package is installed together with the main project:
 
 ```bash
-cd /path/to/sara_retrieve_rerank_project
-pip install -e .
+cd /path/to/adzuna
+python -m pip install -e .[server,rerank,dev]
 ```
 
 Additional dependencies for the agent:
@@ -136,7 +136,7 @@ ADZUNA_COUNTER_PATH=data/processed/profile_counter.json
 
 ```bash
 python -c "
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 result = run_scheduled_job()
 print(result)
 "
@@ -145,7 +145,7 @@ print(result)
 Or from a script:
 
 ```python
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 
 result = run_scheduled_job()
 print(result["status"])   # "ok" or "error"
@@ -189,8 +189,8 @@ celery -A your_celery_app beat   --loglevel=info
 ### Scheduled via cron
 
 ```cron
-0  2  * * *  /path/to/.venv/bin/python -c "from sara_retrieve_rerank.adzuna import run_scheduled_job; run_scheduled_job()"
-0 14  * * *  /path/to/.venv/bin/python -c "from sara_retrieve_rerank.adzuna import run_scheduled_job; run_scheduled_job()"
+0  2  * * *  /path/to/.venv/bin/python -c "from backend.services.adzuna import run_scheduled_job; run_scheduled_job()"
+0 14  * * *  /path/to/.venv/bin/python -c "from backend.services.adzuna import run_scheduled_job; run_scheduled_job()"
 ```
 
 ---
@@ -200,7 +200,7 @@ celery -A your_celery_app beat   --loglevel=info
 The only change required in the candidate submission handler is a single line added after parsing the structured profile:
 
 ```python
-from sara_retrieve_rerank.adzuna import ProfileCounter
+from backend.services.adzuna import ProfileCounter
 
 counter = ProfileCounter()   # singleton — create once at application startup
 
@@ -257,7 +257,7 @@ export PYTHONUNBUFFERED=1
 python -c "
 import logging
 logging.basicConfig(level=logging.INFO)
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 run_scheduled_job()
 "
 ```

@@ -5,12 +5,12 @@ React + Vite single-page app. Provides a chat interface that collects job prefer
 ## Requirements
 
 - Node.js 18+
-- The backend API running at `http://localhost:8000` (see [`src/backend/README.md`](../backend/README.md))
+- The backend API running at `http://localhost:8000` (see [`backend/README.md`](../backend/README.md))
 
 ## Setup
 
 ```bash
-# From src/frontend/
+# From frontend/
 npm install
 ```
 
@@ -32,24 +32,26 @@ All `/api/*` requests are proxied to `http://localhost:8000` during development,
 ## Project Structure
 
 ```
-src/frontend/
+frontend/
 ├── index.html
 ├── vite.config.js
 └── src/
     ├── main.jsx                  # Entry point, global styles, React root
-    ├── App.jsx                   # Root layout: chat panel + job results panel
+    ├── App.jsx                   # Auth gate + root layout (chat panel + job results panel)
     ├── components/
+    │   ├── Login.jsx             # Login screen (credentials → session cookie)
     │   ├── MessageBubble.jsx     # Single chat message (user or assistant)
     │   ├── ChatInput.jsx         # Text input + send button
     │   ├── JobCard.jsx           # Individual job listing card
     │   └── JobResults.jsx        # Job results list with loading/error states
     └── hooks/
-        ├── useChat.js            # SSE streaming, message history management
-        └── useJobs.js            # Job recommendation fetch, loading state
+        ├── useAuth.js            # Session check + login
+        └── useChat.js            # SSE streaming, session history, search/jobs events
 ```
 
 ## How It Works
 
-1. **Chat** — `useChat` streams responses from `POST /api/chat/stream` as SSE events. Text tokens are appended to the current assistant bubble in real time.
-2. **Search trigger** — when the backend emits a `ready_to_search` event (after collecting enough info), `useJobs` fires `POST /api/jobs/recommend` with the extracted user profile.
-3. **Layout** — the job results panel slides in alongside the chat once results are available.
+1. **Login** — `useAuth` checks for an existing session; if there is none, `Login` collects credentials and posts them to `/api/auth/login`. Once authenticated, the chat shell renders.
+2. **Chat** — `useChat` streams responses from `POST /api/chat/stream` as SSE events. Text chunks are appended to the current assistant bubble in real time. The session id is persisted in `localStorage`, and prior history is hydrated from `/api/chat/history/{session_id}`.
+3. **Search & results** — when the backend emits a `searching` event (after collecting enough info), the results panel opens with a loading state. The ranked jobs then arrive inline on the *same* stream as a `jobs` event — there is no separate recommend request.
+4. **Layout** — the job results panel slides in alongside the chat once results are available; **New chat** resets the session via `/api/chat/reset/{session_id}`.

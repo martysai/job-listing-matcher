@@ -14,7 +14,12 @@ from typing import Literal
 Verdict = Literal["transient", "fatal"]
 
 
-_TRANSIENT_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504, 522, 524}
+# 413 (request/context too large) is treated as transient because providers
+# have very different context windows — GitHub Models tops out at 8k input
+# tokens while Anthropic Sonnet 4.6 has 200k.  Failing over is exactly the
+# behavior we want here, and at worst we get a fast second 413 on the next
+# provider.
+_TRANSIENT_STATUS_CODES = {408, 413, 425, 429, 500, 502, 503, 504, 522, 524}
 
 
 def _status_code(exc: BaseException) -> int | None:

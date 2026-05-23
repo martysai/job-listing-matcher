@@ -92,6 +92,25 @@ def _router(*, primary: FakeProvider, fallback: FakeProvider, monkeypatch) -> LL
     )
 
 
+def _three_router(
+    *,
+    p1: FakeProvider,
+    p2: FakeProvider,
+    p3: FakeProvider,
+    monkeypatch,
+) -> LLMRouter:
+    """3-provider chain matching the real default: anthropic → github → mistral."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "anthropic,github,mistral")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "0")
+    return LLMRouter(
+        provider_factories={
+            "anthropic": lambda: p1,
+            "github": lambda: p2,
+            "mistral": lambda: p3,
+        }
+    )
+
+
 # ── parse_structured failover ────────────────────────────────────────────
 
 
@@ -299,3 +318,290 @@ def test_router_is_callable_from_multiple_threads(monkeypatch) -> None:
 
     assert errors == []
     assert results == ["ok"] * 16
+
+
+# ── 3-provider chain (anthropic → github → mistral) ──────────────────────
+
+
+def test_three_provider_uses_first_when_healthy(monkeypatch) -> None:
+    a = FakeProvider("a", parse_value=_Profile(role="anth"))
+    g = FakeProvider("g", parse_value=_Profile(role="gh"))
+    m = FakeProvider("m", parse_value=_Profile(role="mistral"))
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    result = router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert result.role == "anth"
+    assert a.parse_calls == 1
+    assert g.parse_calls == 0
+    assert m.parse_calls == 0
+
+
+def test_three_provider_skips_first_transient_uses_second(monkeypatch) -> None:
+    a = FakeProvider("a", parse_raise=RateLimitError("anth 429"))
+    g = FakeProvider("g", parse_value=_Profile(role="gh"))
+    m = FakeProvider("m", parse_value=_Profile(role="mistral"))
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    result = router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert result.role == "gh"
+    assert a.parse_calls == 1
+    assert g.parse_calls == 1
+    assert m.parse_calls == 0
+
+
+def test_three_provider_falls_through_to_third(monkeypatch) -> None:
+    a = FakeProvider("a", parse_raise=RateLimitError("anth 429"))
+    g = FakeProvider("g", parse_raise=RateLimitError("gh 503"))
+    m = FakeProvider("m", parse_value=_Profile(role="mistral"))
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    result = router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert result.role == "mistral"
+    assert a.parse_calls == 1
+    assert g.parse_calls == 1
+    assert m.parse_calls == 1
+
+
+def test_three_provider_aggregate_when_all_transient(monkeypatch) -> None:
+    a = FakeProvider("a", parse_raise=RateLimitError("a"))
+    g = FakeProvider("g", parse_raise=RateLimitError("g"))
+    m = FakeProvider("m", parse_raise=RateLimitError("m"))
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    with pytest.raises(AllProvidersFailedError) as info:
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert {name for name, _ in info.value.errors} == {"anthropic", "github", "mistral"}
+
+
+def test_three_provider_first_fatal_does_not_failover(monkeypatch) -> None:
+    a = FakeProvider("a", parse_raise=AuthenticationError("401"))
+    g = FakeProvider("g", parse_value=_Profile(role="gh"))
+    m = FakeProvider("m", parse_value=_Profile(role="mistral"))
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    with pytest.raises(AuthenticationError):
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert g.parse_calls == 0
+    assert m.parse_calls == 0
+
+
+def test_three_provider_stream_failover_chains(monkeypatch) -> None:
+    a = FakeProvider("a", stream_chunks=[], stream_raise=RateLimitError("a"))
+    g = FakeProvider("g", stream_chunks=[], stream_raise=RateLimitError("g"))
+    m = FakeProvider("m", stream_chunks=["from-mistral"])
+    router = _three_router(p1=a, p2=g, p3=m, monkeypatch=monkeypatch)
+
+    out = list(router.stream_chat(tier="small", messages=[]))
+
+    assert out == ["from-mistral"]
+    assert a.stream_calls == 1
+    assert g.stream_calls == 1
+    assert m.stream_calls == 1
+
+
+# ── cooldown-empty diagnostics + synthetic error entries ─────────────────
+
+
+def test_all_in_cooldown_still_attempts_and_aggregates(monkeypatch) -> None:
+    """If every provider is in cooldown the router must not silently fail
+    with an empty errors list. It should burn through the cooldowns and
+    surface the freshly-collected diagnostics."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "mistral,github")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "9999")
+
+    primary = FakeProvider("p", parse_raise=RateLimitError("p-429"))
+    fallback = FakeProvider("f", parse_raise=RateLimitError("f-429"))
+
+    fake_now = [1000.0]
+
+    def clock() -> float:
+        return fake_now[0]
+
+    router = LLMRouter(
+        clock=clock,
+        provider_factories={
+            "mistral": lambda: primary,
+            "github": lambda: fallback,
+        },
+    )
+
+    # First pass: both fail, both placed in cooldown.
+    with pytest.raises(AllProvidersFailedError):
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    # Second pass (still in cooldown window): we still attempt all and get
+    # a populated diagnostic, not an empty AllProvidersFailedError.
+    fake_now[0] += 1  # well within cooldown
+    with pytest.raises(AllProvidersFailedError) as info:
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    assert primary.parse_calls == 2
+    assert fallback.parse_calls == 2
+    assert len(info.value.errors) >= 2
+
+
+def test_factory_failure_recorded_in_errors(monkeypatch) -> None:
+    """Provider whose factory raises must be recorded — not silently skipped."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "mistral,github")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "0")
+
+    def boom() -> FakeProvider:
+        raise RuntimeError("no MISTRAL_API_KEY")
+
+    def boom2() -> FakeProvider:
+        raise RuntimeError("no GITHUB_PAT")
+
+    router = LLMRouter(
+        provider_factories={
+            "mistral": boom,
+            "github": boom2,
+        }
+    )
+
+    with pytest.raises(AllProvidersFailedError) as info:
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    names = {n for n, _ in info.value.errors}
+    assert names == {"mistral", "github"}
+    msgs = {str(e) for _, e in info.value.errors}
+    assert any("MISTRAL_API_KEY" in m for m in msgs)
+
+
+def test_all_providers_failed_error_has_summary_when_empty(monkeypatch) -> None:
+    """Guard against the regression where everything in cooldown + no
+    attempts produced ``All LLM providers failed:`` with no diagnostic."""
+    err = AllProvidersFailedError([])
+    assert "no providers configured" in str(err)
+
+
+# ── stream iterator cleanup ──────────────────────────────────────────────
+
+
+class _CloseTrackingProvider:
+    """Provider whose stream returns a wrapper that records ``close()`` calls."""
+
+    def __init__(self, name: str, chunks: list[str], raise_after: int | None = None):
+        self.name = name
+        self._chunks = chunks
+        self._raise_after = raise_after
+        self.stream_calls = 0
+        self.wrapper: "_RecordingIter | None" = None
+
+    def stream_chat(self, *, tier: str, messages: list[dict]):
+        self.stream_calls += 1
+        gen = self._gen()
+        self.wrapper = _RecordingIter(gen)
+        return self.wrapper
+
+    def _gen(self):
+        if self._raise_after == 0:
+            raise RateLimitError("blow up before first yield")
+        for i, c in enumerate(self._chunks):
+            if self._raise_after is not None and i >= self._raise_after:
+                raise RateLimitError("blow up")
+            yield c
+
+    def parse_structured(self, *, tier, prompt, response_format):
+        raise NotImplementedError
+
+
+class _RecordingIter:
+    """Iterator that forwards next/close to a generator and records
+    whether ``close()`` was invoked by the router.
+
+    Must implement ``__next__`` itself (returning ``self`` from
+    ``__iter__``) so ``iter(wrapper)`` keeps the wrapper in place and
+    ``wrapper.close()`` is the call the router makes — not the inner
+    generator's close().
+    """
+
+    def __init__(self, gen):
+        self._gen = gen
+        self.close_calls = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._gen)
+
+    def close(self):
+        self.close_calls += 1
+        return self._gen.close()
+
+
+def test_stream_failover_closes_primary_iterator(monkeypatch) -> None:
+    """When the primary stream errors before the first token, the router
+    must call ``close()`` on the iterator so any underlying HTTP context
+    manager (e.g. Mistral's ``with client.chat.stream(...)``) is exited
+    deterministically rather than waiting on GC."""
+    primary = _CloseTrackingProvider("p", chunks=["never"], raise_after=0)
+    fallback = FakeProvider("f", stream_chunks=["ok"])
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "mistral,github")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "0")
+    router = LLMRouter(
+        provider_factories={
+            "mistral": lambda: primary,
+            "github": lambda: fallback,
+        }
+    )
+
+    out = list(router.stream_chat(tier="small", messages=[]))
+
+    assert out == ["ok"]
+    assert primary.wrapper is not None
+    assert primary.wrapper.close_calls >= 1
+
+
+# ── narrowed except: KeyboardInterrupt propagates, not failover ──────────
+
+
+class _KbdProvider:
+    name = "kbd"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def stream_chat(self, *, tier, messages):
+        self.calls += 1
+        raise KeyboardInterrupt("user hit ^C")
+
+    def parse_structured(self, *, tier, prompt, response_format):
+        self.calls += 1
+        raise KeyboardInterrupt("user hit ^C")
+
+
+def test_keyboard_interrupt_propagates_through_parse(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "mistral,github")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "0")
+    p = _KbdProvider()
+    f = FakeProvider("f", parse_value=_Profile(role="never"))
+    router = LLMRouter(
+        provider_factories={"mistral": lambda: p, "github": lambda: f}
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        router.parse_structured(tier="large", prompt="hi", response_format=_Profile)
+
+    # Did NOT silently fail over to the fallback.
+    assert f.parse_calls == 0
+
+
+def test_keyboard_interrupt_propagates_through_stream(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "mistral,github")
+    monkeypatch.setenv("LLM_PROVIDER_COOLDOWN_S", "0")
+    p = _KbdProvider()
+    f = FakeProvider("f", stream_chunks=["never"])
+    router = LLMRouter(
+        provider_factories={"mistral": lambda: p, "github": lambda: f}
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        list(router.stream_chat(tier="small", messages=[]))
+
+    assert f.stream_calls == 0

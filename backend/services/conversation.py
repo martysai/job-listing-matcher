@@ -129,20 +129,39 @@ class ConversationService:
                 event="parse_start",
                 session_id=session_id,
             )
-            loop = asyncio.get_event_loop()
-            parsed = await loop.run_in_executor(None, parse_job_request, user_text)
-            log_sink.append(
-                ts=time.time(),
-                level="info",
-                logger="conversation",
-                component="chat",
-                event="parse_done",
-                session_id=session_id,
-                payload=parsed.model_dump(),
-            )
-            jobs = await _recommender.search(
-                profile=parsed.model_dump(exclude_none=True), top_k=10
-            )
-            yield {"type": "jobs", "jobs": jobs}
+            loop = asyncio.get_running_loop()
+            try:
+                parsed = await loop.run_in_executor(None, parse_job_request, user_text)
+                log_sink.append(
+                    ts=time.time(),
+                    level="info",
+                    logger="conversation",
+                    component="chat",
+                    event="parse_done",
+                    session_id=session_id,
+                    payload=parsed.model_dump(),
+                )
+                jobs = await _recommender.search(
+                    profile=parsed.model_dump(exclude_none=True), top_k=10
+                )
+                yield {"type": "jobs", "jobs": jobs}
+            except Exception as exc:  # noqa: BLE001 — surface any failure to UI
+                log_sink.append(
+                    ts=time.time(),
+                    level="error",
+                    logger="conversation",
+                    component="chat",
+                    event="search_failed",
+                    session_id=session_id,
+                    payload={"error_type": type(exc).__name__, "error": str(exc)[:500]},
+                )
+                # Always terminate the jobs phase so the UI's "Searching…"
+                # spinner clears.  An empty list is the agreed-upon
+                # "no matches / something went wrong" signal for the client.
+                yield {
+                    "type": "jobs",
+                    "jobs": [],
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                }
 
         yield {"type": "done"}

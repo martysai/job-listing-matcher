@@ -54,7 +54,7 @@ def test_fatal_by_name(name: str) -> None:
     assert classify(_make(name)) == "fatal"
 
 
-@pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 408, 522, 524])
+@pytest.mark.parametrize("status", [408, 413, 425, 429, 500, 502, 503, 504, 522, 524])
 def test_transient_by_status(status: int) -> None:
     exc = _make("WeirdError", status=status)
     assert classify(exc) == "transient"
@@ -64,6 +64,15 @@ def test_transient_by_status(status: int) -> None:
 def test_fatal_by_status(status: int) -> None:
     exc = _make("WeirdError", status=status)
     assert classify(exc) == "fatal"
+
+
+def test_apistatuserror_413_request_too_large_is_transient() -> None:
+    # GitHub Models caps gpt-4o at 8k input tokens and rejects oversized
+    # requests with HTTP 413 ``tokens_limit_reached``.  Anthropic Sonnet
+    # 4.6 has 200k context, so failover is the right behaviour rather than
+    # propagating the failure to the caller.
+    exc = _make("APIStatusError", status=413)
+    assert classify(exc) == "transient"
 
 
 def test_apierror_with_fatal_4xx_status_is_fatal() -> None:

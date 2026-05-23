@@ -111,10 +111,10 @@ class _LLMConfig:
 def _sgr_invoke(llm: _LLMConfig, prompt: str) -> Any:
     """Structured generation call routed via the LLM router (with failover)."""
     from llm_router import litellm_completion
+    from llm_router.config import tier_for_model_string
 
-    tier = "large" if "large" in llm.model.lower() else "small"
     return litellm_completion(
-        tier            = tier,
+        tier            = tier_for_model_string(llm.model),
         messages        = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user",   "content": prompt},

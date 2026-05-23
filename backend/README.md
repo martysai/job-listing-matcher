@@ -1,11 +1,11 @@
 # Backend — Job Recommendation API
 
-FastAPI service that powers the job-matching chat interface. It streams conversation responses via Server-Sent Events using the (stub: Anthropic Claude API), and exposes a job recommendation endpoint backed by a pluggable ML retriever/reranker.
+FastAPI service that powers the job-matching chat interface. It streams conversation responses via Server-Sent Events from an LLM, runs profile extraction, and drives the `sara_retrieve_rerank` retrieval + reranking pipeline — returning ranked vacancies inline in the chat stream.
 
 ## Requirements
 
 - Python 3.11+
-- An [Anthropic API key](https://console.anthropic.com/)
+- An LLM API token (read from `MISTRAL_API_KEY`)
 
 ## Setup
 
@@ -17,10 +17,13 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e .[server,rerank]
 ```
 
-Create a `.env` file (or copy the existing one) and fill in your key:
+Create a `.env` file (or copy the existing one) and fill in your LLM API token plus the vacancy corpus the recommender loads at startup:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+MISTRAL_API_KEY=...                                       # LLM API token (chat + extraction)
+VACANCIES_PATH=.jsonl
+CHROMA_DIR=data/chroma                                    # optional, defaults to data/chroma
+LAMBDARANK_MODEL_PATH=.pkl                               # optional; absent = retrieval only, no reranking
 ```
 
 ## Running
@@ -37,46 +40,43 @@ The API is available at `http://localhost:8000`. Interactive docs at `/docs`.
 
 ## API Endpoints
 
+Every `/api/*` route except `auth/login` and `auth/logout` requires the session cookie set at login.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `POST` | `/api/chat/stream` | Stream chat response as SSE |
-| `POST` | `/api/jobs/recommend` | Return ranked job listings |
+| `GET` | `/health` | Health check |
+| `POST` | `/api/auth/login` | Log in with an HTTP Basic header; sets the session cookie |
+| `POST` | `/api/auth/logout` | Clear the session cookie |
+| `GET` | `/api/auth/me` | Verify the current session |
+| `POST` | `/api/chat/stream` | Stream the chat reply as SSE; runs the job search inline |
+| `GET` | `/api/chat/history/{session_id}` | Full message history for a session |
+| `POST` | `/api/chat/reset/{session_id}` | Reset a session |
+| `GET` | `/api/logs` | Query the JSONL audit log of LLM calls |
 | `POST` | `/api/admin/vacancy-refresh` | Manually trigger one Adzuna refresh cycle |
 
 ### `POST /api/chat/stream`
 
-Accepts a conversation history and streams SSE events:
+Accepts the conversation history and streams SSE events:
 
 ```json
 { "messages": [{"role": "user", "content": "..."}], "session_id": "..." }
 ```
 
-Event types emitted:
+The chat model collects preferences turn by turn. Once it has enough, it emits a `searching` event, extracts a structured profile, retrieves + re-ranks vacancies, and streams them back as a `jobs` event — all within the same request.
 
 | Type | Payload | Meaning |
 |------|---------|---------|
-| `text` | `{"content": "..."}` | Streamed text token |
-| `ready_to_search` | `{"profile": {...}}` | Bot has collected enough info; trigger job search |
+| `text` | `{"content": "..."}` | Streamed text chunk |
+| `searching` | — | Enough info collected; profile extraction + retrieval started |
+| `jobs` | `{"jobs": [Job, ...]}` | Ranked vacancies for the collected profile |
 | `done` | — | Stream complete |
 
-### `POST /api/jobs/recommend`
+Each `Job` object has `id`, `title`, `company`, `location`, `salary`, `tags`, `summary`, `url`, and `match_score`.
 
-```json
-{
-  "profile": {
-    "title": "Senior Python Engineer",
-    "skills": ["Python", "FastAPI"],
-    "location": "Remote",
-    "experience_years": 5,
-    "job_type": "full-time",
-    "salary_min": 90000
-  },
-  "top_k": 10
-}
-```
+### `GET /api/logs`
 
-Returns a list of `Job` objects with `id`, `title`, `company`, `location`, `salary`, `tags`, `summary`, `url`, and `match_score`.
+Returns recent audit-log rows (one per LLM call / pipeline event). Optional query params: `session_id`, `event`, `component`, `limit` (≤ 500), `offset`.
 
 ## Vacancy refresh loop
 
@@ -103,6 +103,8 @@ VACANCY_REFRESH_LOCATIONS        country:city,country:city,...
 VACANCY_REFRESH_ROLES            role,role,role
 VACANCY_REFRESH_INTERVAL_SECONDS
 VACANCY_REFRESH_INITIAL_DELAY_SECONDS
+ADZUNA_MAX_VACANCIES             (cap per cycle; throttle)
+VACANCY_EXTRACTOR_DELAY          (seconds between extractor LLM calls)
 ```
 
 If `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` or an LLM key is missing, the loop
@@ -111,42 +113,36 @@ recommendations from the existing index.
 
 To run a cycle on demand: `POST /api/admin/vacancy-refresh` (auth required).
 
-## Connecting your ML pipeline
+To run refresh **independently of the API** (so cron survives API restarts),
+use the standalone daemon and disable the in-API loop:
 
-`services/recommender.py` contains a stub implementation that returns placeholder jobs. Replace it with your real retriever and reranker:
+```
+# Terminal 1 — daemon
+python scripts/run_refresh_daemon.py
 
-```python
-# services/recommender.py
-from your_ml_module import VectorStore, Retriever, Reranker
-
-class RecommenderService:
-    def __init__(self):
-        self.store     = VectorStore(path="...")
-        self.retriever = Retriever(self.store)
-        self.reranker  = Reranker(model="...")
-
-    async def search(self, profile: dict, top_k: int = 10) -> list[dict]:
-        query      = _build_query(profile)
-        candidates = await asyncio.to_thread(self.retriever.retrieve, query, k=top_k * 3)
-        ranked     = await asyncio.to_thread(self.reranker.rerank, query, candidates, k=top_k)
-        return [_format_job(j) for j in ranked]
+# Terminal 2 — API server, reader-only
+VACANCY_REFRESH_ENABLED=false python scripts/run_backend.py --port 8001
 ```
 
-The `_build_query` and `_format_job` helpers in that file are ready to use as-is.
+
 
 ## Project Structure
 
 ```
 backend/
-├── main.py                  # FastAPI app, CORS, router registration
-├── .env                     # ANTHROPIC_API_KEY (not committed)
+├── main.py                  # FastAPI app, CORS + auth middleware, router registration
+├── .env                     # secrets + corpus paths (not committed)
 ├── routes/
+│   ├── auth.py              # login / logout / me (cookie session)
 │   ├── chat.py              # POST /api/chat/stream
-│   └── jobs.py              # POST /api/jobs/recommend
+│   ├── history.py           # chat history + reset
+│   └── logs.py              # GET /api/logs (audit-log query)
 └── services/
-    ├── conversation.py      # Claude streaming + <SEARCH_READY> detection
-    ├── recommender.py       # ML adapter (stub — plug in your code here)
+    ├── conversation.py      # LLM streaming + <SEARCH> detection; runs the recommender inline
+    ├── recommender.py       # adapter onto the sara_retrieve_rerank pipeline
+    ├── database.py          # SQLite store (sessions + messages)
+    ├── log_sink.py          # JSONL audit-log writer + query helper
     ├── sara_retrieve_rerank/  # retrieval + reranking pipeline
-    ├── sara_candidate_poll/   # candidate profile extraction
-    └── adzuna/               # vacancy scraper + refresh agent
+    ├── sara_candidate_poll/   # candidate profile extraction (free text → schema)
+    └── adzuna/                # live vacancy scraper + LangGraph refresh agent
 ```

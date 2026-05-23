@@ -39,15 +39,14 @@ SCRAPE_DELAY_SECONDS: float = float(os.environ.get("ADZUNA_SCRAPE_DELAY", "2.5")
 # litellm model string for the ReAct agent that orchestrates the tools.
 AGENT_MODEL: str = os.environ.get(
     "VACANCY_AGENT_LLM_MODEL",
-    # "mistral/mistral-large-latest"
-    "mistral/mistral-large-latest"
+    "mistral/mistral-small-latest"
 
 )
 
 # Token-bucket rate for the agent's LLM calls (requests per second).
 # The agent makes ~8-10 calls per cycle; 0.3 req/s ≈ 1 call per 3 seconds.
 # Raise if your plan allows higher throughput; lower if you still hit 429.
-AGENT_LLM_RPS: float = float(os.environ.get("VACANCY_AGENT_LLM_RPS", "0.3"))
+AGENT_LLM_RPS: float = float(os.environ.get("VACANCY_AGENT_LLM_RPS", "0.1"))
 
 # ── LLM — field extractor (Tool 1.5, extractor.py) ───────────────────────────
 
