@@ -1,5 +1,8 @@
 # Job Listing Matcher
 
+<img width="2318" height="1271" alt="image" src="https://github.com/user-attachments/assets/b9f3501b-72d4-4724-bc53-f65abd22ca3f" />
+
+
 A chat-based job-matching assistant. The user describes their experience and what
 they are looking for in plain language; the system turns that into a structured
 profile, retrieves the best-matching vacancies from a vector database, re-ranks
