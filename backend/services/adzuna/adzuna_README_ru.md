@@ -1,6 +1,6 @@
 # Adzuna Vacancy Refresh Agent
 
-Субпакет `sara_retrieve_rerank.adzuna` — периодический агент, который пополняет базу вакансий Chroma свежими объявлениями из [Adzuna API](https://developer.adzuna.com/docs/). Работает независимо от живого пути обработки запросов кандидата и не влияет на него.
+Субпакет `backend.services.adzuna` — периодический агент, который пополняет базу вакансий Chroma свежими объявлениями из [Adzuna API](https://developer.adzuna.com/docs/). Работает независимо от живого пути обработки запросов кандидата и не влияет на него.
 
 ---
 
@@ -66,7 +66,7 @@ ProfileCounter → QueryBuilder → список AdzunaQuery
 ## Структура файлов
 
 ```
-sara_retrieve_rerank/adzuna/
+backend/services/adzuna/
 ├── __init__.py       Публичный API пакета
 ├── config.py         Константы, env-переменные, AdzunaQuery, таблицы маппинга
 ├── counter.py        ProfileCounter, QueryBuilder, ADZUNA_CATEGORIES, маппинги
@@ -84,8 +84,8 @@ sara_retrieve_rerank/adzuna/
 Пакет устанавливается вместе с основным проектом:
 
 ```bash
-cd /path/to/sara_retrieve_rerank_project
-pip install -e .
+cd /path/to/services
+python -m pip install -e .[server,rerank,dev]
 ```
 
 Дополнительные зависимости для агента:
@@ -136,7 +136,7 @@ ADZUNA_COUNTER_PATH=data/processed/profile_counter.json
 
 ```bash
 python -c "
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 result = run_scheduled_job()
 print(result)
 "
@@ -145,7 +145,7 @@ print(result)
 Или из скрипта:
 
 ```python
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 
 result = run_scheduled_job()
 print(result["status"])   # "ok" или "error"
@@ -189,8 +189,8 @@ celery -A your_celery_app beat   --loglevel=info
 ### По расписанию через cron
 
 ```cron
-0  2  * * *  /path/to/.venv/bin/python -c "from sara_retrieve_rerank.adzuna import run_scheduled_job; run_scheduled_job()"
-0 14  * * *  /path/to/.venv/bin/python -c "from sara_retrieve_rerank.adzuna import run_scheduled_job; run_scheduled_job()"
+0  2  * * *  /path/to/.venv/bin/python -c "from backend.services.adzuna import run_scheduled_job; run_scheduled_job()"
+0 14  * * *  /path/to/.venv/bin/python -c "from backend.services.adzuna import run_scheduled_job; run_scheduled_job()"
 ```
 
 ---
@@ -200,7 +200,7 @@ celery -A your_celery_app beat   --loglevel=info
 Единственное изменение в обработчике запроса кандидата — одна строка после парсинга профиля:
 
 ```python
-from sara_retrieve_rerank.adzuna import ProfileCounter
+from backend.services.adzuna import ProfileCounter
 
 counter = ProfileCounter()   # синглтон — создать один раз при старте
 
@@ -231,7 +231,6 @@ async def handle_candidate(candidate_text: str, background_tasks):
 import json
 from pathlib import Path
 
-original = list(map(json.loads, Path("data/raw/vacancies_safe_ml_dataset_nozip.jsonl").read_text().splitlines()))
 adzuna   = list(map(json.loads, Path("data/raw/adzuna_vacancies.jsonl").read_text().splitlines()))
 
 # Дедупликация по dataset_id
@@ -258,7 +257,7 @@ export PYTHONUNBUFFERED=1
 python -c "
 import logging
 logging.basicConfig(level=logging.INFO)
-from sara_retrieve_rerank.adzuna import run_scheduled_job
+from backend.services.adzuna import run_scheduled_job
 run_scheduled_job()
 "
 ```

@@ -134,7 +134,7 @@ Available tools
 scrape_vacancies(broaden: bool = False)
     Hit the Adzuna API and store raw results in shared context.
     Pass broaden=True to remove the location filter if the first scrape
-    returned fewer than 50 vacancies.
+    returned fewer than 1 vacancies.
 
 check_scrape_quality()
     Inspect the vacancies currently stored in context.
@@ -153,8 +153,8 @@ Required workflow
 -----------------
 1. Call scrape_vacancies().
 2. Call check_scrape_quality().
-   - If fewer than 50 vacancies: call scrape_vacancies(broaden=True).
-   - If still fewer than 10: stop and report.
+   - If fewer than 1 vacancies: call scrape_vacancies(broaden=True).
+   - If still fewer than 1: stop and report.
 3. Call extract_fields().
 4. Call index_to_vector_store().
 5. Report a concise summary: scraped / extracted / indexed counts.
