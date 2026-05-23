@@ -75,9 +75,14 @@ and either a preferred location or a remote-work preference — end your message
 exact marker <SEARCH> on its own line.
 """
 
-_DEFAULT_MODEL = "mistral-small-latest"
+_DEFAULT_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 _SENTINEL = object()
 _recommender = RecommenderService()
+
+
+class _StreamError:
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 def _stream_worker(
@@ -93,6 +98,8 @@ def _stream_worker(
                 delta = chunk.data.choices[0].delta.content
                 if delta:
                     q.put(delta)
+    except Exception as exc:  # noqa: BLE001
+        q.put(_StreamError(str(exc)))
     finally:
         q.put(_SENTINEL)
 
@@ -124,6 +131,12 @@ class ConversationService:
             chunk = await loop.run_in_executor(None, q.get)
             if chunk is _SENTINEL:
                 break
+            if isinstance(chunk, _StreamError):
+                yield {
+                    "type": "text",
+                    "content": f"\n\n[LLM error: {chunk.message}]",
+                }
+                continue
 
             if in_search:
                 continue

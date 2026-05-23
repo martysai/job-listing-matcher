@@ -12,6 +12,11 @@ import os
 
 from sara_retrieve_rerank.pipeline import RecommendationPipeline
 
+_SCORE_MIN = 0.55
+_SCORE_MAX = 0.97
+_SCORE_DEGENERATE = 0.80
+_CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "RUB": "₽"}
+
 
 class RecommenderService:
     def __init__(self):
@@ -31,7 +36,9 @@ class RecommenderService:
     async def search(self, profile: dict, top_k: int = 10) -> list[dict]:
         candidate = {"text": _build_query(profile)}
         matches = await asyncio.to_thread(self.pipeline.match, candidate, k=top_k)
-        return [_format_job(m, self._vacancy_lookup) for m in matches]
+        jobs = [_format_job(m, self._vacancy_lookup) for m in matches]
+        _normalize_scores(jobs)
+        return jobs
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -65,11 +72,11 @@ def _format_job(match: dict, lookup: dict) -> dict:
     tags = [t.strip() for t in raw_tags.split(",") if t.strip()] if raw_tags else []
 
     # Location: prefer cities, fall back to regions (both are comma-joined strings).
-    location = match.get("cities") or match.get("regions") or vac.get("location", "Remote")
+    location_raw = match.get("cities") or match.get("regions") or vac.get("location")
+    location = _pretty_location(location_raw)
 
-    # Salary: raw vacancy field may be absent; format to string if present.
-    salary_raw = vac.get("salary")
-    salary = str(salary_raw) if salary_raw else None
+    # Salary: raw vacancy field may be absent; format to readable string if present.
+    salary = _format_salary(vac.get("salary"))
 
     # Summary: prefer short description, fall back to full text, truncate.
     summary_raw = vac.get("tldr_sanitized") or vac.get("text_sanitized") or ""
@@ -94,3 +101,58 @@ def _format_job(match: dict, lookup: dict) -> dict:
         "url":         vac.get("url", "#"),
         "match_score": match_score,
     }
+
+
+def _pretty_location(raw) -> str:
+    """Turn raw 'united_kingdom, berlin' → 'United Kingdom, Berlin'."""
+    if not raw:
+        return "Remote"
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    out = []
+    for p in parts:
+        words = p.replace("_", " ").split()
+        pretty = " ".join(
+            w if (len(w) <= 3 and w.isupper()) else w.capitalize() for w in words
+        )
+        out.append(pretty)
+    return ", ".join(out) if out else "Remote"
+
+
+def _format_salary(raw) -> str | None:
+    """Format dict salary {min,max,currency,salary_in_usd} or pass through string."""
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        return raw
+    if not isinstance(raw, dict):
+        return str(raw)
+    cur = (raw.get("currency") or "").upper()
+    sym = _CURRENCY_SYMBOLS.get(cur, cur + " " if cur else "")
+    lo, hi = raw.get("min"), raw.get("max")
+    usd = raw.get("salary_in_usd")
+    if lo and hi:
+        return f"{sym}{int(lo):,} – {int(hi):,}"
+    if lo:
+        return f"from {sym}{int(lo):,}"
+    if hi:
+        return f"up to {sym}{int(hi):,}"
+    if usd:
+        return f"~${int(usd):,}"
+    return None
+
+
+def _normalize_scores(jobs: list[dict]) -> None:
+    """Min-max rescale match_score in place to [_SCORE_MIN, _SCORE_MAX]."""
+    if not jobs:
+        return
+    scores = [j.get("match_score", 0.0) for j in jobs]
+    lo, hi = min(scores), max(scores)
+    span = hi - lo
+    if span < 1e-9:
+        for j in jobs:
+            j["match_score"] = _SCORE_DEGENERATE
+        return
+    out_span = _SCORE_MAX - _SCORE_MIN
+    for j in jobs:
+        norm = (j.get("match_score", 0.0) - lo) / span
+        j["match_score"] = _SCORE_MIN + norm * out_span
