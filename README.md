@@ -1,5 +1,17 @@
 # Job Listing Matcher
 
+![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=black)
+![LangChain](https://img.shields.io/badge/LangChain-1.2-1C3C3C?style=flat&logo=langchain&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-ReAct_Agent-1C3C3C?style=flat&logo=langchain&logoColor=white)
+![Anthropic Claude](https://img.shields.io/badge/Anthropic-Claude-CC785C?style=flat&logo=anthropic&logoColor=white)
+![Mistral AI](https://img.shields.io/badge/Mistral_AI-LLM-FF7000?style=flat&logoColor=white)
+![GitHub Models](https://img.shields.io/badge/GitHub_Models-LLM-181717?style=flat&logo=github&logoColor=white)
+![LiteLLM](https://img.shields.io/badge/LiteLLM-Router-0EA5E9?style=flat)
+![DVC](https://img.shields.io/badge/DVC-Azure_Remote-945DD6?style=flat&logo=dvc&logoColor=white)
+![Azure Blob Storage](https://img.shields.io/badge/Azure-Blob_Storage-0078D4?style=flat&logo=microsoftazure&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat&logo=fastapi&logoColor=white)
+![Chroma](https://img.shields.io/badge/Chroma-Vector_DB-FF6719?style=flat)
+
 <img width="2318" height="1271" alt="image" src="https://github.com/user-attachments/assets/b9f3501b-72d4-4724-bc53-f65abd22ca3f" />
 
 
