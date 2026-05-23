@@ -2,16 +2,21 @@ import base64
 import hashlib
 import hmac
 import os
+import secrets
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 router = APIRouter()
 
-_USERNAME = "saradev"
-_PASSWORD = "vibe-code"
+_USERNAME = os.getenv("AUTH_USERNAME", "saradev")
+_PASSWORD = os.getenv("AUTH_PASSWORD", "vibe-code")
 COOKIE_NAME = "session"
-_SECRET = "saradev-xK9mP2qVr8wL3nT5"
+# HMAC signing key for the session cookie. Pulled from AUTH_SECRET in any
+# real deployment; if unset we fall back to a fresh per-process random secret
+# so a leaked literal can never sign a valid cookie. Sessions are then
+# invalidated on every process restart, which is the safe failure mode.
+_SECRET = os.getenv("AUTH_SECRET") or secrets.token_urlsafe(64)
 _MAX_AGE = 86400  # 24 hours
 _SECURE_COOKIE = os.getenv("HTTPS", "true").lower() != "false"
 
