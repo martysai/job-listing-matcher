@@ -1,0 +1,135 @@
+name: smoke
+
+# Keyless end-to-end smoke checks. Boots the real backend with a tiny
+# in-repo vacancies fixture (no DVC, no LLM keys) and builds the frontend
+# bundle. Endpoints that would call out to LLMs are not exercised here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VACANCIES_PATH: tests/fixtures/vacancies_smoke.jsonl
+      CHROMA_DIR: /tmp/chroma-smoke
+      HTTPS: "false"
+      VACANCY_REFRESH_ENABLED: "false"
+      AUTH_USERNAME: saradev
+      AUTH_PASSWORD: vibe-code
+      AUTH_SECRET: smoke-test-secret-not-for-prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-minilm-l6-v2
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e .[server,rerank,dev]
+
+      - name: Boot uvicorn in background
+        working-directory: backend
+        run: |
+          mkdir -p "$CHROMA_DIR"
+          nohup python -m uvicorn main:app --host 127.0.0.1 --port 8000 \
+            > "$GITHUB_WORKSPACE/uvicorn.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/uvicorn.pid"
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health > /tmp/health.json; then
+              echo "Backend is up (after ${i}s)"
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become ready in 120s"
+          echo "---- uvicorn.log ----"
+          cat "$GITHUB_WORKSPACE/uvicorn.log"
+          exit 1
+
+      - name: Health endpoint returns ok
+        run: |
+          status=$(jq -r .status < /tmp/health.json)
+          test "$status" = "ok"
+
+      - name: Anonymous /api/auth/me returns 401
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/auth/me)
+          echo "code=$code"
+          test "$code" = "401"
+
+      - name: Login with demo credentials returns 200 + cookie
+        run: |
+          rm -f /tmp/cookies.txt
+          code=$(curl -s -o /tmp/login.json -w "%{http_code}" \
+            -u "$AUTH_USERNAME:$AUTH_PASSWORD" \
+            -c /tmp/cookies.txt \
+            -X POST http://127.0.0.1:8000/api/auth/login)
+          echo "code=$code"
+          cat /tmp/login.json
+          test "$code" = "200"
+          grep -q "^[^#].*session" /tmp/cookies.txt
+
+      - name: Authenticated /api/auth/me returns 200
+        run: |
+          code=$(curl -s -o /tmp/me.json -w "%{http_code}" \
+            -b /tmp/cookies.txt http://127.0.0.1:8000/api/auth/me)
+          echo "code=$code"
+          cat /tmp/me.json
+          test "$code" = "200"
+
+      - name: Dump uvicorn log on failure
+        if: failure()
+        run: |
+          echo "---- uvicorn.log ----"
+          cat "$GITHUB_WORKSPACE/uvicorn.log" || true
+
+      - name: Stop uvicorn
+        if: always()
+        run: |
+          pid="$(cat "$GITHUB_WORKSPACE/uvicorn.pid" 2>/dev/null || true)"
+          if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+          fi
+
+  frontend-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend bundle
+        run: npm run build
