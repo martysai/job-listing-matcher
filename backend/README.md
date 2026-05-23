@@ -45,6 +45,7 @@ Every `/api/*` route except `auth/login` and `auth/logout` requires the session 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
+| `GET` | `/health` | Health check |
 | `POST` | `/api/auth/login` | Log in with an HTTP Basic header; sets the session cookie |
 | `POST` | `/api/auth/logout` | Clear the session cookie |
 | `GET` | `/api/auth/me` | Verify the current session |
@@ -52,6 +53,7 @@ Every `/api/*` route except `auth/login` and `auth/logout` requires the session 
 | `GET` | `/api/chat/history/{session_id}` | Full message history for a session |
 | `POST` | `/api/chat/reset/{session_id}` | Reset a session |
 | `GET` | `/api/logs` | Query the JSONL audit log of LLM calls |
+| `POST` | `/api/admin/vacancy-refresh` | Manually trigger one Adzuna refresh cycle |
 
 ### `POST /api/chat/stream`
 
@@ -75,6 +77,54 @@ Each `Job` object has `id`, `title`, `company`, `location`, `salary`, `tags`, `s
 ### `GET /api/logs`
 
 Returns recent audit-log rows (one per LLM call / pipeline event). Optional query params: `session_id`, `event`, `component`, `limit` (≤ 500), `offset`.
+
+## Vacancy refresh loop
+
+On startup, the lifespan schedules `VacancyRefreshService` (in
+`services/vacancy_refresh.py`), a background asyncio task that periodically
+runs the LangGraph ReAct Adzuna agent (`services/adzuna/adzuna_agent.py`)
+and hot-merges any new vacancies into the live Chroma + BM25 index without
+restarting the API.
+
+Each cycle is fully isolated: every layer (env validation, Adzuna HTTP,
+LLM ReAct loop, Chroma upsert, BM25 rebuild) is wrapped in try/except, so
+a refresh failure preserves the previous in-memory state and the API keeps
+serving from the existing index.
+
+The default plan covers three locations × three roles (London / Berlin /
+Amsterdam × Data Scientist / ML Engineer / Software Engineer) every six
+hours. Override via env (see `.env.example`):
+
+```
+ADZUNA_APP_ID, ADZUNA_APP_KEY
+MISTRAL_API_KEY  (or OPENAI_API_KEY / ANTHROPIC_API_KEY)
+VACANCY_REFRESH_ENABLED          (true / false)
+VACANCY_REFRESH_LOCATIONS        country:city,country:city,...
+VACANCY_REFRESH_ROLES            role,role,role
+VACANCY_REFRESH_INTERVAL_SECONDS
+VACANCY_REFRESH_INITIAL_DELAY_SECONDS
+ADZUNA_MAX_VACANCIES             (cap per cycle; throttle)
+VACANCY_EXTRACTOR_DELAY          (seconds between extractor LLM calls)
+```
+
+If `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` or an LLM key is missing, the loop
+auto-disables and logs the reason — the API still boots and serves
+recommendations from the existing index.
+
+To run a cycle on demand: `POST /api/admin/vacancy-refresh` (auth required).
+
+To run refresh **independently of the API** (so cron survives API restarts),
+use the standalone daemon and disable the in-API loop:
+
+```
+# Terminal 1 — daemon
+python scripts/run_refresh_daemon.py
+
+# Terminal 2 — API server, reader-only
+VACANCY_REFRESH_ENABLED=false python scripts/run_backend.py --port 8001
+```
+
+
 
 ## Project Structure
 

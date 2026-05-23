@@ -243,11 +243,32 @@ def build_agent(ctx: RefreshContext, llm: Any) -> Any:
 # Entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_scheduled_job() -> dict:
+def run_scheduled_job(
+    *,
+    embedder: Any | None = None,
+    chroma_collection: Any | None = None,
+    query_builder: Any | None = None,
+) -> dict:
     """Запустить один цикл обновления базы вакансий.
 
-    Вызывается Celery beat, cron или Airflow.
-    Все настройки берутся из переменных окружения.
+    Вызывается Celery beat, cron, Airflow или фоновым asyncio-циклом FastAPI
+    (см. ``services.vacancy_refresh.VacancyRefreshService``).
+
+    Параметры
+    ----------
+    embedder, chroma_collection
+        Если переданы — агент пишет в существующий Chroma collection и
+        переиспользует уже загруженный embedder вместо создания собственных.
+        Это критично для backend-интеграции: иначе агент создаёт отдельную
+        коллекцию ``vacancies`` рядом с живой ``vacancy_retriever`` и его
+        работа никак не влияет на то, что отдаёт recommender.
+        Если None — используется поведение по умолчанию (отдельная коллекция
+        из CHROMA_COLLECTION_NAME, локальный embedder).
+    query_builder
+        Объект с методом ``build() -> list[AdzunaQuery]``.  Если None,
+        используется демановый QueryBuilder(ProfileCounter).  Для cron-пути
+        обычно передаётся ``FixedQueryBuilder`` с явным списком запросов
+        (топ локаций × топ ролей).
 
     Переменные окружения
     --------------------
@@ -260,8 +281,14 @@ def run_scheduled_job() -> dict:
 
     Возвращает
     ----------
-    {"status": "ok",    "summary": "<текст агента>"}
+    {"status": "ok",    "summary": "<текст агента>",
+     "processed_vacancies": [<dict>, ...]}
     {"status": "error", "error":   "<сообщение об ошибке>"}
+
+    ``processed_vacancies`` — это полностью заполненные vacancy dict-ы
+    (после Adzuna → vacancy_dict + LLM extractor merge), готовые к подаче
+    в ``vacancy_to_text`` / ``vacancy_to_metadata`` / BM25.  Если агент
+    остановился до extract_fields, список пустой, но статус всё ещё "ok".
 
     Celery
     ------
@@ -274,9 +301,6 @@ def run_scheduled_job() -> dict:
                 {"task": "vacancy_refresh", "schedule": crontab(hour=14, minute=0)},
         }
     """
-    import chromadb
-    from langchain_huggingface import HuggingFaceEmbeddings
-
     # ── Валидация Adzuna credentials ──────────────────────────────────────────
     # Пустые credentials дают HTTP 404 на каждый запрос к API.
     from adzuna.config import ADZUNA_APP_ID, ADZUNA_APP_KEY
@@ -291,17 +315,24 @@ def run_scheduled_job() -> dict:
         }
 
     # ── Инфраструктура ────────────────────────────────────────────────────────
-    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-    chroma_collection = (
-        chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        .get_or_create_collection(CHROMA_COLLECTION_NAME)
-    )
+    # Если caller передал embedder / chroma_collection — переиспользуем их
+    # (live backend integration).  Иначе строим собственные (standalone run).
+    if embedder is None:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    if chroma_collection is None:
+        import chromadb
+        chroma_collection = (
+            chromadb.PersistentClient(path=CHROMA_DB_PATH)
+            .get_or_create_collection(CHROMA_COLLECTION_NAME)
+        )
 
     # ── Контекст одного запуска ───────────────────────────────────────────────
     counter = ProfileCounter()
+    qb = query_builder if query_builder is not None else QueryBuilder(counter)
     ctx = RefreshContext(
         counter           = counter,
-        query_builder     = QueryBuilder(counter),
+        query_builder     = qb,
         embedder          = embedder,
         chroma_collection = chroma_collection,
         extractor_model   = os.environ.get("VACANCY_EXTRACTOR_LLM_MODEL", EXTRACTOR_MODEL),
@@ -350,7 +381,13 @@ def run_scheduled_job() -> dict:
     summary = final_messages[-1].content if final_messages else "(no summary)"
 
     log.info("Цикл завершён: %s", summary)
-    return {"status": "ok", "summary": summary}
+    return {
+        "status": "ok",
+        "summary": summary,
+        # Полностью обработанные вакансии — caller использует их для
+        # горячего обновления in-memory BM25 / lookup без перезапуска.
+        "processed_vacancies": list(ctx.processed_vacancies),
+    }
 
 
 # @celery_app.task(name="vacancy_refresh")

@@ -6,7 +6,7 @@ from llm_router import stream_chat as _router_stream_chat
 
 from sara_candidate_poll import parse_job_request
 from services import log_sink
-from services.recommender import RecommenderService
+from services.recommender import get_recommender
 
 SYSTEM_PROMPT = """You are a friendly job recommendation assistant. Your goal is to understand
 what kind of job the user is looking for by collecting the information below naturally
@@ -73,7 +73,10 @@ exact marker <SEARCH> on its own line.
 """
 
 _DEFAULT_TIER = "small"
-_recommender = RecommenderService()
+# Singleton — see services/recommender.py.  The refresh loop, the admin
+# endpoint, and this streamer all share one RecommenderService instance so
+# vacancies added by the cron become immediately visible here.
+_recommender = get_recommender()
 
 
 class ConversationService:

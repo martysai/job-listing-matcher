@@ -85,7 +85,8 @@ async def scrape_adzuna_batch(
                 )
                 break
 
-            url    = ADZUNA_BASE_URL.format(country=country, page=1)
+            query_country = query.country or country
+            url    = ADZUNA_BASE_URL.format(country=query_country, page=1)
             params = {**query.to_params(), "app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY}
 
             try:

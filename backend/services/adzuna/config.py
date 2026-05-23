@@ -119,6 +119,11 @@ class AdzunaQuery:
     ``to_params()`` returns the query-string dict for the HTTP request.
     Empty strings for what / where / category are omitted so the API
     applies the broadest filter for that dimension.
+
+    ``country`` is optional: when set, ``scrape_adzuna_batch`` uses it for
+    this single query instead of the batch default.  Lets one batch span
+    multiple Adzuna country endpoints (e.g. gb + de + nl) without juggling
+    the ADZUNA_COUNTRY env var per call.
     """
 
     what:             str
@@ -126,6 +131,7 @@ class AdzunaQuery:
     category:         str
     results_per_page: int = RESULTS_PER_REQUEST
     sort_by:          str = "date"
+    country:          str | None = None
 
     def to_params(self) -> dict:
         p: dict = {
