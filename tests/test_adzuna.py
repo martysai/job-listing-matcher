@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from adzuna import (
+from sara_retrieve_rerank.adzuna import (
     SUPPORTED_COUNTRIES,
     _cache_key,
     _parse_job,
