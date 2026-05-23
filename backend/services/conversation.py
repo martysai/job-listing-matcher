@@ -1,11 +1,8 @@
 import asyncio
-import os
-import queue
-import threading
 import time
 from typing import AsyncGenerator
 
-from mistralai.client import Mistral
+from llm_router import stream_chat as _router_stream_chat
 
 from sara_candidate_poll import parse_job_request
 from services import log_sink
@@ -75,31 +72,15 @@ and either a preferred location or a remote-work preference — end your message
 exact marker <SEARCH> on its own line.
 """
 
-_DEFAULT_MODEL = "mistral-small-latest"
-_SENTINEL = object()
+_DEFAULT_TIER = "small"
 _recommender = RecommenderService()
-
-
-def _stream_worker(
-    client: Mistral,
-    model: str,
-    messages: list[dict],
-    q: "queue.Queue[object]",
-) -> None:
-    """Run Mistral streaming in a background thread; push chunks onto q."""
-    try:
-        with client.chat.stream(model=model, messages=messages) as stream:
-            for chunk in stream:
-                delta = chunk.data.choices[0].delta.content
-                if delta:
-                    q.put(delta)
-    finally:
-        q.put(_SENTINEL)
 
 
 class ConversationService:
     def __init__(self):
-        self.client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+        # No client is held: the router constructs providers lazily so a
+        # transient outage on one side cannot break instantiation.
+        pass
 
     async def stream(
         self,
@@ -109,22 +90,11 @@ class ConversationService:
         text_buffer = ""
         in_search = False
 
-        q: queue.Queue = queue.Queue()
-        full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-
-        threading.Thread(
-            target=_stream_worker,
-            args=(self.client, _DEFAULT_MODEL, full_messages, q),
-            daemon=True,
-        ).start()
-
-        loop = asyncio.get_event_loop()
-
-        while True:
-            chunk = await loop.run_in_executor(None, q.get)
-            if chunk is _SENTINEL:
-                break
-
+        async for chunk in _router_stream_chat(
+            messages,
+            tier=_DEFAULT_TIER,
+            system=SYSTEM_PROMPT,
+        ):
             if in_search:
                 continue
 
@@ -156,19 +126,39 @@ class ConversationService:
                 event="parse_start",
                 session_id=session_id,
             )
-            parsed = await loop.run_in_executor(None, parse_job_request, user_text)
-            log_sink.append(
-                ts=time.time(),
-                level="info",
-                logger="conversation",
-                component="chat",
-                event="parse_done",
-                session_id=session_id,
-                payload=parsed.model_dump(),
-            )
-            jobs = await _recommender.search(
-                profile=parsed.model_dump(exclude_none=True), top_k=10
-            )
-            yield {"type": "jobs", "jobs": jobs}
+            loop = asyncio.get_running_loop()
+            try:
+                parsed = await loop.run_in_executor(None, parse_job_request, user_text)
+                log_sink.append(
+                    ts=time.time(),
+                    level="info",
+                    logger="conversation",
+                    component="chat",
+                    event="parse_done",
+                    session_id=session_id,
+                    payload=parsed.model_dump(),
+                )
+                jobs = await _recommender.search(
+                    profile=parsed.model_dump(exclude_none=True), top_k=10
+                )
+                yield {"type": "jobs", "jobs": jobs}
+            except Exception as exc:  # noqa: BLE001 — surface any failure to UI
+                log_sink.append(
+                    ts=time.time(),
+                    level="error",
+                    logger="conversation",
+                    component="chat",
+                    event="search_failed",
+                    session_id=session_id,
+                    payload={"error_type": type(exc).__name__, "error": str(exc)[:500]},
+                )
+                # Always terminate the jobs phase so the UI's "Searching…"
+                # spinner clears.  An empty list is the agreed-upon
+                # "no matches / something went wrong" signal for the client.
+                yield {
+                    "type": "jobs",
+                    "jobs": [],
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                }
 
         yield {"type": "done"}

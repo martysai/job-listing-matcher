@@ -69,6 +69,8 @@ export function useChat({ onSearching, onJobsReceived }) {
         content,
       }));
 
+      let searchInProgress = false;
+
       try {
         const res = await fetch("/api/chat/stream", {
           method: "POST",
@@ -104,12 +106,14 @@ export function useChat({ onSearching, onJobsReceived }) {
             } else if (event.type === "searching") {
               const id = crypto.randomUUID();
               searchMsgIdRef.current = id;
+              searchInProgress = true;
               setMessages((prev) => [
                 ...prev.filter((m) => m.id !== assistantId),
                 { id, role: "assistant", content: SEARCH_TEXT },
               ]);
               onSearching();
             } else if (event.type === "jobs") {
+              searchInProgress = false;
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === searchMsgIdRef.current ? { ...m, content: DONE_TEXT } : m
@@ -130,6 +134,12 @@ export function useChat({ onSearching, onJobsReceived }) {
           );
         }
       } finally {
+        if (searchInProgress) {
+          // Stream ended (cleanly or via error) without a terminal `jobs`
+          // event — clear the recommendations spinner so the UI doesn't
+          // hang on "Searching for your best matches…".
+          onJobsReceived([]);
+        }
         setIsStreaming(false);
         readerRef.current = null;
       }

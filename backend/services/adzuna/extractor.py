@@ -109,12 +109,13 @@ class _LLMConfig:
 
 
 def _sgr_invoke(llm: _LLMConfig, prompt: str) -> Any:
-    """Raw litellm SGR call; returns the completion response object."""
-    from litellm import completion  # lazy import to keep startup fast
+    """Structured generation call routed via the LLM router (with failover)."""
+    from llm_router import litellm_completion
+    from llm_router.config import tier_for_model_string
 
-    return completion(
-        model    = llm.model,
-        messages = [
+    return litellm_completion(
+        tier            = tier_for_model_string(llm.model),
+        messages        = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user",   "content": prompt},
         ],

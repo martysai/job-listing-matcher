@@ -1,22 +1,21 @@
-import os
+"""Structured-parse client backed by the LLM router (GitHub Models → Anthropic → Mistral)."""
+
 from typing import Type, TypeVar
 
 from dotenv import load_dotenv
-from mistralai.client import Mistral
 from pydantic import BaseModel
+
+from llm_router import parse_structured as _router_parse_structured
+from llm_router.config import tier_for_model_string
 
 load_dotenv()
 
 T = TypeVar("T", bound=BaseModel)
 
+# Kept for backward compatibility with parser.py which imports this symbol
+# (and uses it as the default for its own ``model=`` argument).
 _DEFAULT_MODEL = "mistral-large-latest"
-
-
-def _get_client() -> Mistral:
-    api_key = os.environ.get("MISTRAL_API_KEY")
-    if not api_key:
-        raise EnvironmentError("MISTRAL_API_KEY environment variable is not set")
-    return Mistral(api_key=api_key)
+_DEFAULT_TIER = "large"
 
 
 def parse_structured(
@@ -24,12 +23,18 @@ def parse_structured(
     response_format: Type[T],
     model: str = _DEFAULT_MODEL,
 ) -> T:
-    """Send full_prompt as a user message and parse the response into response_format."""
-    client = _get_client()
-    messages = [{"role": "user", "content": full_prompt}]
-    response = client.chat.parse(
-        model=model,
-        messages=messages,
-        response_format=response_format,
+    """Send ``full_prompt`` to the LLM router and parse the response.
+
+    The legacy ``model`` argument is mapped to a router tier via
+    ``llm_router.config.tier_for_model_string`` (``"large"`` for anything
+    containing ``large``/``opus``/``sonnet``, ``"small"`` otherwise) so
+    callers that still pass a CLI ``--model`` keep their capability tier
+    intact even though concrete provider+model selection is owned by the
+    router.  Callers wanting an explicit tier should call
+    ``llm_router.parse_structured`` directly.
+    """
+    return _router_parse_structured(
+        full_prompt,
+        response_format,
+        tier=tier_for_model_string(model) if model else _DEFAULT_TIER,
     )
-    return response.choices[0].message.parsed
