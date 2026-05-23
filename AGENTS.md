@@ -5,7 +5,7 @@ Use this repository as a structured refactor of the original Colab notebook.
 ## Rules
 
 - Keep the first working behavior equivalent to the notebook unless the task explicitly asks for algorithmic changes.
-- Put reusable logic in `src/sara_retrieve_rerank/`.
+- Put reusable logic in `backend/services/sara_retrieve_rerank/`.
 - Keep notebooks thin: orchestration, inspection, plots, and experiment notes only.
 - Do not hard-code local absolute paths.
 - Keep raw data out of git. Use `data/raw/` for local datasets.

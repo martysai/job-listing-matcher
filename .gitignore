@@ -225,9 +225,14 @@ chroma/
 data/processed/
 data/raw/
 data/cache/
+data/logs/
+
+# Node.js
+node_modules/
 
 # Local agent/editor state
 .claude/
 
-# Local LLM API keys (gpt4o_demo)
+# Local LLM credentials
 key.txt
+anthropic_api_personal_key.txt

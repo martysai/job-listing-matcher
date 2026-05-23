@@ -32,7 +32,7 @@ import json
 import os
 import textwrap
 
-from sara_retrieve_rerank.adzuna import (
+from adzuna import (
     AdzunaJob,
     SUPPORTED_COUNTRIES,
     search_many_countries,

@@ -16,7 +16,11 @@ source .venv/bin/activate
 
 python -m ensurepip --upgrade
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
-python -m pip install -e .
+
+# For VPS, install CPU-only torch first to avoid pip pulling the 2 GB CUDA wheel
+# that sentence-transformers would otherwise trigger via PyPI's default index.
+# python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+python -m pip install -e .[server,rerank,dev]
 
 python scripts/check_env.py

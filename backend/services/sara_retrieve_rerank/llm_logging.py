@@ -18,20 +18,29 @@ DEFAULT_LOGGER_NAME = "sara.llm"
 
 
 def setup_llm_jsonl_logger(
-    path: str | Path,
+    path: str | Path | None = None,
     *,
     logger_name: str = DEFAULT_LOGGER_NAME,
     level: int = logging.INFO,
 ) -> logging.Logger:
-    """Configure a JSONL file logger for LLM calls.
+    """Configure a JSONL logger for LLM calls.
 
-    Idempotent: repeated calls with the same `path` do not stack handlers.
+    When ``path`` is None the logger propagates to its parent so records
+    reach whatever handler the application has attached (e.g. JsonlHandler
+    on the root ``sara`` logger).  When ``path`` is given a FileHandler is
+    added and propagation is disabled — used by tests and standalone scripts.
+
+    Idempotent: repeated calls with the same ``path`` do not stack handlers.
     """
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
+
+    if path is None:
+        logger.propagate = True
+        return logger
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     logger.propagate = False
 
     target = str(output_path.resolve())
