@@ -1,13 +1,16 @@
 """Snapshot the live Chroma DB into a portable zip for shipping to prod.
 
-Bundles ``data/chroma/`` (the persistent vector store) plus
-``data/raw/adzuna_vacancies.jsonl`` (the raw vacancy audit log the prod
-backend reads alongside Chroma) into a single timestamped zip under
-``outputs/``.
+Bundles three things by default:
+
+  * ``data/chroma/`` — the persistent vector store
+  * ``data/raw/adzuna_vacancies.jsonl`` — live Adzuna BM25 audit log
+  * ``data/raw/vacancies_safe_ml_dataset_nozip.jsonl`` — seed BM25 corpus
+    (the prod backend's ``RecommendationPipeline`` requires this at startup
+    via the ``VACANCIES_PATH`` env var)
 
 The zip is safe to copy to the production machine and extract on top of
-its ``data/`` directory.  The receiving machine needs no API keys — only
-the same sentence-transformers embedding model
+its ``data/`` directory.  The receiving machine needs no API keys for the
+read path — only the same sentence-transformers embedding model
 (``sentence-transformers/all-MiniLM-L6-v2``), which HuggingFace fetches
 automatically on first use.
 
@@ -15,7 +18,9 @@ Usage::
 
     python scripts/package_chroma.py
     python scripts/package_chroma.py --label nightly
-    python scripts/package_chroma.py --no-jsonl     # Chroma only
+    python scripts/package_chroma.py --no-jsonl     # skip live Adzuna log
+    python scripts/package_chroma.py --no-seed      # skip 46 MB seed corpus
+                                                    # (when prod already has it)
 
 The daemon can keep running while this script executes; SQLite uses
 copy-on-write under the hood and the snapshot will reflect the state at
@@ -34,6 +39,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 JSONL_PATH = REPO_ROOT / "data" / "raw" / "adzuna_vacancies.jsonl"
+SEED_PATH  = REPO_ROOT / "data" / "raw" / "vacancies_safe_ml_dataset_nozip.jsonl"
 OUTPUT_DIR = REPO_ROOT / "outputs"
 
 
@@ -56,6 +62,12 @@ def main() -> int:
         "--no-jsonl",
         action="store_true",
         help="Skip the adzuna_vacancies.jsonl raw audit log.",
+    )
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Skip the 46 MB vacancies_safe_ml_dataset_nozip.jsonl seed corpus "
+             "(use when the prod box already has the same file).",
     )
     parser.add_argument(
         "--output-dir",
@@ -91,7 +103,13 @@ def main() -> int:
             zf.write(JSONL_PATH, arcname=str(JSONL_PATH.relative_to(REPO_ROOT)))
             n_files += 1
             n_bytes += JSONL_PATH.stat().st_size
-            print(f"  + {JSONL_PATH.relative_to(REPO_ROOT)} (raw audit log)")
+            print(f"  + {JSONL_PATH.relative_to(REPO_ROOT)} (live Adzuna BM25 audit log)")
+
+        if not args.no_seed and SEED_PATH.exists():
+            zf.write(SEED_PATH, arcname=str(SEED_PATH.relative_to(REPO_ROOT)))
+            n_files += 1
+            n_bytes += SEED_PATH.stat().st_size
+            print(f"  + {SEED_PATH.relative_to(REPO_ROOT)} (seed BM25 corpus, required at startup)")
 
     final_size = out_path.stat().st_size
     print()
