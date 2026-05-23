@@ -50,6 +50,10 @@ dev = [
     "pandas",
     "numpy",
 ]
+# DVC with Azure Blob Storage remote (data lives outside the repo — see README)
+dvc = [
+    "dvc[azure]>=3.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["backend/services"]

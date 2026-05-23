@@ -182,11 +182,7 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 
 # Ruff stuff:
 .ruff_cache/
@@ -221,11 +217,15 @@ chroma/
 # macOS
 .DS_Store
 
-# Local/generated data
-data/processed/
-data/raw/
-data/cache/
-data/logs/
+# Local/generated data — files in these directories are ignored, but DVC
+# pointer files (*.dvc) and seed markers are tracked.
+data/raw/*
+data/processed/*
+data/cache/*
+data/logs/*
+!data/**/*.dvc
+!data/**/.gitignore
+!data/**/.gitkeep
 
 # Node.js
 node_modules/

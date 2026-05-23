@@ -1,0 +1,5 @@
+outs:
+- md5: 6b01813f6121279840389e7e044e0ebb
+  size: 7244
+  hash: md5
+  path: vacancies_seed.jsonl

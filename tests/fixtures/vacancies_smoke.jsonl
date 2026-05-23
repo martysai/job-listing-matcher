@@ -1,0 +1,4 @@
+{"dataset_id": "smoke-ml-1", "title": "Senior Machine Learning Engineer", "tldr_sanitized": "Build ranking pipelines using PyTorch and Python on GCP.", "specializations": ["Machine Learning"], "regions": ["EU"], "work_format": ["remote"], "english_level": "B2"}
+{"dataset_id": "smoke-fe-1", "title": "Frontend Engineer", "tldr_sanitized": "React TypeScript design systems and CSS animations.", "specializations": ["Frontend"], "regions": ["EU"], "work_format": ["hybrid"], "english_level": "B2"}
+{"dataset_id": "smoke-de-1", "title": "Data Engineer", "tldr_sanitized": "Spark Airflow SQL data pipelines on AWS.", "specializations": ["Data Engineering"], "regions": ["US"], "work_format": ["remote"], "english_level": "C1"}
+{"dataset_id": "smoke-be-1", "title": "Backend Engineer", "tldr_sanitized": "Go and Rust services for fintech platform.", "specializations": ["Backend"], "regions": ["EU"], "work_format": ["onsite"], "english_level": "B2"}
