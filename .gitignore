@@ -232,3 +232,6 @@ node_modules/
 
 # Local agent/editor state
 .claude/
+
+# Local LLM credentials
+key.txt

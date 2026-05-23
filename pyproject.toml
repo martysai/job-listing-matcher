@@ -22,6 +22,7 @@ dependencies = [
     "litellm",
     "anthropic",
     "mistralai==2.1.3",
+    "openai>=1.40",
     "pydantic==2.12.5",
     "python-dotenv==1.2.2",
     "beautifulsoup4",
