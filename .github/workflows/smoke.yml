@@ -86,8 +86,14 @@ jobs:
             -X POST http://127.0.0.1:8000/api/auth/login)
           echo "code=$code"
           cat /tmp/login.json
+          echo
+          echo "---- cookies.txt ----"
+          cat /tmp/cookies.txt
           test "$code" = "200"
-          grep -q "^[^#].*session" /tmp/cookies.txt
+          # The session cookie is httpOnly so curl's Netscape jar prefixes
+          # the line with "#HttpOnly_" — that's not a real comment, so just
+          # check the cookie name is present anywhere.
+          grep -q 'session' /tmp/cookies.txt
 
       - name: Authenticated /api/auth/me returns 200
         run: |
