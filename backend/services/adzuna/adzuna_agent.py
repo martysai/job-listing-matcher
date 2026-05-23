@@ -171,28 +171,28 @@ Rules
 # LLM factory
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _tier_for_model_string(model_string: str) -> str:
+    """Heuristic: pick the router tier matching the requested LiteLLM model."""
+    return "large" if "large" in model_string.lower() else "small"
+
+
 def build_llm(model_string: str) -> Any:
-    """Вернуть LangChain chat-модель через ChatLiteLLM.
+    """Вернуть LangChain chat-модель с автоматическим failover.
 
-    Rate limiting реализован через _MinDelayCallback, а не через параметр
-    rate_limiter конструктора — не все провайдеры в langchain_litellm
-    поддерживают этот параметр.  Callback работает с любой моделью.
+    Маршрутизация Mistral → GitHub Models построена в
+    ``llm_router.litellm_bridge.make_chat_model``; primary провайдер падает —
+    LangChain автоматически переключится на fallback через
+    ``.with_fallbacks([...])``.
 
-    Примеры model_string
-    --------------------
-    mistral/mistral-large-latest
-    gpt-4o
-    claude-3-5-haiku-20241022
-
-    API-ключи читаются из окружения автоматически через litellm
-    (MISTRAL_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY).
+    ``model_string`` остаётся для обратной совместимости — мы используем его
+    только чтобы выбрать tier (``"large"`` если в строке есть ``large``,
+    иначе ``"small"``).  Конкретные model id'ы каждого провайдера хранятся
+    в ``llm_router.config.TIERS``.
     """
-    from langchain_litellm import ChatLiteLLM  # pip install langchain-litellm
+    from llm_router import make_chat_model
 
-    return ChatLiteLLM(
-        model       = model_string,
-        temperature = 0,
-    )
+    tier = _tier_for_model_string(model_string)
+    return make_chat_model(tier=tier, temperature=0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
