@@ -11,6 +11,7 @@ This module is the integration seam the UI / API layer is meant to import.
 from __future__ import annotations
 
 import pickle
+import threading
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -83,6 +84,53 @@ class RecommendationPipeline:
         if reranker_model_path is not None:
             with Path(reranker_model_path).open("rb") as model_file:
                 self.reranker_model = pickle.load(model_file)
+
+        # Guards in-memory state during add_vacancies: live readers see either
+        # fully old or fully new self.bm25 / self.vacancies / self.documents,
+        # never a half-rebuilt index.  The dense Chroma store is already
+        # thread-safe at the chromadb layer.
+        self._add_lock = threading.Lock()
+
+    def add_vacancies(self, new_vacancies: Sequence[dict[str, Any]]) -> int:
+        """Merge new vacancies into the live in-memory state.
+
+        Used by the periodic refresh loop after the Adzuna agent finishes a
+        cycle. Skips duplicates (matched by ``dataset_id`` against the current
+        corpus), rebuilds BM25 over the combined corpus, then atomically swaps
+        the new index in place.  Callers running concurrent ``match()`` calls
+        keep seeing the old BM25 until the swap completes — there is no
+        observable in-between state.
+
+        The dense Chroma collection is left untouched here: the agent already
+        upserted into it via ``partial_reindex``.  We only need to refresh the
+        derivative in-memory structures (``vacancies``, ``documents``, BM25)
+        so that hybrid / BM25 retrieval starts returning the new entries.
+
+        Returns the number of vacancies actually appended (after dedup).
+        """
+        if not new_vacancies:
+            return 0
+
+        with self._add_lock:
+            existing_ids = {str(v.get("dataset_id", "")) for v in self.vacancies}
+            unique_new = [
+                v for v in new_vacancies
+                if str(v.get("dataset_id", "")) and str(v["dataset_id"]) not in existing_ids
+            ]
+            if not unique_new:
+                return 0
+
+            merged_vacancies = self.vacancies + list(unique_new)
+            new_documents = create_vacancy_documents(merged_vacancies)
+            new_bm25 = BM25Index(new_documents)
+
+            # Atomic swap: any concurrent reader either sees the old triplet
+            # or the new one, never a mismatched pair.
+            self.vacancies = merged_vacancies
+            self.documents = new_documents
+            self.bm25 = new_bm25
+
+        return len(unique_new)
 
     def match(
         self,

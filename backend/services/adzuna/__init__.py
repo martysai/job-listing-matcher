@@ -20,12 +20,13 @@ File layout
 """
 
 from adzuna.adzuna_agent import run_scheduled_job
-from adzuna.counter import ProfileCounter, QueryBuilder
+from adzuna.counter import FixedQueryBuilder, ProfileCounter, QueryBuilder
 from adzuna.config import AdzunaQuery
 
 __all__ = [
     "run_scheduled_job",
     "ProfileCounter",
     "QueryBuilder",
+    "FixedQueryBuilder",
     "AdzunaQuery",
 ]

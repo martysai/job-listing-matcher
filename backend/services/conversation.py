@@ -9,7 +9,7 @@ from mistralai.client import Mistral
 
 from sara_candidate_poll import parse_job_request
 from services import log_sink
-from services.recommender import RecommenderService
+from services.recommender import get_recommender
 
 SYSTEM_PROMPT = """You are a friendly job recommendation assistant. Your goal is to understand
 what kind of job the user is looking for by collecting the information below naturally
@@ -77,7 +77,7 @@ exact marker <SEARCH> on its own line.
 
 _DEFAULT_MODEL = "mistral-small-latest"
 _SENTINEL = object()
-_recommender = RecommenderService()
+_recommender = get_recommender()
 
 
 def _stream_worker(

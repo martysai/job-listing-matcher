@@ -376,3 +376,22 @@ class QueryBuilder:
             for _ in range(n)
         ]
         return result[:DAILY_REQUEST_BUDGET]
+
+
+class FixedQueryBuilder:
+    """Drop-in replacement for QueryBuilder that returns a static query list.
+
+    Used by the cron-driven refresh path where we don't want demand-driven
+    query planning — instead the operator specifies an explicit list of
+    (country, location, role) tuples to scrape every cycle (typically the
+    top 2-3 tech hubs × top 2-3 target roles).
+
+    Matches the ``build() -> list[AdzunaQuery]`` interface so it slots into
+    ``RefreshContext.query_builder`` without any agent-side changes.
+    """
+
+    def __init__(self, queries: list[AdzunaQuery]):
+        self._queries = list(queries)
+
+    def build(self) -> list[AdzunaQuery]:
+        return list(self._queries)
