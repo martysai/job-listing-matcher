@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +76,10 @@ def partial_reindex(
     existing ones without rebuilding the index.  Expired vacancies
     (expire_at < now, source == adzuna) are deleted at the start of each run.
 
+    ``expire_at`` is stored as a POSIX timestamp (float seconds since epoch)
+    because Chroma's ``$lt`` comparator only accepts numeric operands;
+    using an ISO-8601 string here breaks TTL cleanup at runtime.
+
     BM25
     ----
     Raw vacancy dicts are appended to adzuna_jsonl_path.  At pipeline startup
@@ -86,8 +90,8 @@ def partial_reindex(
 
     Returns a stats dict: upserted, expired_removed, bm25_appended, errors.
     """
-    now_iso    = datetime.utcnow().isoformat()
-    expire_iso = (datetime.utcnow() + timedelta(days=ttl_days)).isoformat()
+    now_ts     = datetime.now(timezone.utc).timestamp()
+    expire_ts  = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).timestamp()
     stats      = {"upserted": 0, "expired_removed": 0, "bm25_appended": 0, "errors": 0}
     log        = logging.getLogger("sara.agent")
 
@@ -96,7 +100,7 @@ def partial_reindex(
         deleted = chroma_collection.delete(
             where={"$and": [
                 {"source":    {"$eq": "adzuna"}},
-                {"expire_at": {"$lt": now_iso}},
+                {"expire_at": {"$lt": now_ts}},
             ]}
         )
         stats["expired_removed"] = len(deleted) if isinstance(deleted, list) else 0
@@ -111,7 +115,7 @@ def partial_reindex(
             embeddings = [item["embedding"] for item in vectorized],
             documents  = [item["text"] for item in vectorized],
             metadatas  = [
-                {**item["metadata"], "expire_at": expire_iso, "source": "adzuna"}
+                {**item["metadata"], "expire_at": expire_ts, "source": "adzuna"}
                 for item in vectorized
             ],
         )
