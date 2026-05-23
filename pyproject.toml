@@ -50,6 +50,10 @@ dev = [
     "pandas",
     "numpy",
 ]
+# DVC with Google Drive remote (data lives outside the repo — see README)
+dvc = [
+    "dvc[gdrive]>=3.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["backend/services"]

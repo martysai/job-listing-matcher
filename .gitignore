@@ -217,11 +217,15 @@ chroma/
 # macOS
 .DS_Store
 
-# Local/generated data
-data/processed/
-data/raw/
-data/cache/
-data/logs/
+# Local/generated data — files in these directories are ignored, but DVC
+# pointer files (*.dvc) and seed markers are tracked.
+data/raw/*
+data/processed/*
+data/cache/*
+data/logs/*
+!data/**/*.dvc
+!data/**/.gitignore
+!data/**/.gitkeep
 
 # Node.js
 node_modules/

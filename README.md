@@ -125,7 +125,7 @@ format, and English level. Full numbers, plots, and reproduction commands live i
 ├── tests/                          # pytest suite
 ├── notebooks/                      # experiment notebooks
 ├── data/
-│   ├── raw/                        # input JSONL (gitignored)
+│   ├── raw/                        # input JSONL (DVC-tracked; *.dvc pointers in git)
 │   ├── processed/                  # generated feature rows (gitignored)
 │   └── chroma/                     # persistent dense index
 ├── outputs/                        # plots, trained models
@@ -151,6 +151,33 @@ Copy `.env.example` to `.env` and fill in your keys:
 MISTRAL_API_KEY=...
 ADZUNA_APP_ID=
 ADZUNA_APP_KEY=
+```
+
+### Data (DVC + Google Drive)
+
+Raw and processed datasets are tracked with **DVC** and stored in Google
+Drive — they never sit in the git repo. The `.dvc` pointer files under
+`data/` are checked in; the underlying data is fetched on demand.
+
+One-time setup per machine:
+
+```bash
+pip install -e .[dvc]                    # adds dvc[gdrive]
+
+# Point DVC at the shared Google Drive folder. The placeholder URL in
+# .dvc/config (gdrive://REPLACE_ME) must be swapped for the real folder
+# ID once. Anyone with read access to the folder can then `dvc pull`.
+dvc remote modify --local gdrive url gdrive://<FOLDER_ID>
+
+dvc pull                                 # downloads data/raw/* into place
+```
+
+To add a new dataset:
+
+```bash
+dvc add data/raw/my_new_file.jsonl       # creates my_new_file.jsonl.dvc
+git add data/raw/my_new_file.jsonl.dvc
+dvc push                                 # uploads to the Drive remote
 ```
 
 ## Running
