@@ -90,25 +90,33 @@ class ConversationService:
         text_buffer = ""
         in_search = False
 
-        async for chunk in _router_stream_chat(
-            messages,
-            tier=_DEFAULT_TIER,
-            system=SYSTEM_PROMPT,
-        ):
-            if in_search:
-                continue
+        try:
+            async for chunk in _router_stream_chat(
+                messages,
+                tier=_DEFAULT_TIER,
+                system=SYSTEM_PROMPT,
+            ):
+                if in_search:
+                    continue
 
-            text_buffer += chunk
+                text_buffer += chunk
 
-            if "<SEARCH>" in text_buffer:
-                pre, _ = text_buffer.split("<SEARCH>", 1)
-                if pre:
-                    yield {"type": "text", "content": pre}
-                in_search = True
-                text_buffer = ""
-            elif len(text_buffer) > 20:
-                safe, text_buffer = text_buffer[:-20], text_buffer[-20:]
-                yield {"type": "text", "content": safe}
+                if "<SEARCH>" in text_buffer:
+                    pre, _ = text_buffer.split("<SEARCH>", 1)
+                    if pre:
+                        yield {"type": "text", "content": pre}
+                    in_search = True
+                    text_buffer = ""
+                elif len(text_buffer) > 20:
+                    safe, text_buffer = text_buffer[:-20], text_buffer[-20:]
+                    yield {"type": "text", "content": safe}
+        except Exception as exc:  # noqa: BLE001 — surface stream failures to UI
+            # If the router (or all underlying providers) raised, surface the
+            # error as a visible chat text event instead of hanging the UI.
+            yield {
+                "type": "text",
+                "content": f"\n\n[LLM error: {type(exc).__name__}: {str(exc)[:200]}]",
+            }
 
         if text_buffer.strip():
             yield {"type": "text", "content": text_buffer}
