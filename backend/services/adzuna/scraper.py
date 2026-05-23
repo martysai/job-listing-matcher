@@ -42,15 +42,22 @@ async def scrape_adzuna_batch(
     country: str = ADZUNA_COUNTRY,
     delay_seconds: float = SCRAPE_DELAY_SECONDS,
     max_vacancies: int | None = None,
+    max_vacancies_per_query: int | None = None,
 ) -> list[dict]:
     """Execute all queries sequentially and return deduplicated raw vacancy dicts.
 
     Parameters
     ----------
     max_vacancies:
-        Stop scraping after this many unique vacancies have been collected.
-        None (default) means no limit — run all queries to completion.
-        Set via ADZUNA_MAX_VACANCIES env var (see config.py).
+        Stop scraping after this many unique vacancies have been collected
+        *in total*.  None (default) means no global cap — run all queries
+        to completion.  Set via ADZUNA_MAX_VACANCIES env var.
+    max_vacancies_per_query:
+        Keep at most this many new (post-dedup) vacancies *per query*.  None
+        (default) means no per-query cap.  Used to spread harvest across
+        every (location × role) pair instead of letting the first few
+        queries fill the global bucket.  Set via ADZUNA_MAX_PER_QUERY env
+        var (see config.py).
 
     Skips queries that return 0 results immediately (saves API quota).
     Continues on HTTP errors and timeouts, logging a warning per failure.
@@ -68,7 +75,12 @@ async def scrape_adzuna_batch(
     n_empty = 0  # queries with 0 results
     n_error = 0  # HTTP errors / timeouts
 
-    limit_msg = f"  limit={max_vacancies}" if max_vacancies else "  no limit"
+    limit_msg_parts = []
+    if max_vacancies:
+        limit_msg_parts.append(f"total={max_vacancies}")
+    if max_vacancies_per_query:
+        limit_msg_parts.append(f"per_query={max_vacancies_per_query}")
+    limit_msg = "  limits: " + ", ".join(limit_msg_parts) if limit_msg_parts else "  no limit"
     log.info(
         "Adzuna scrape started — %d queries planned  delay=%.1fs%s",
         len(queries), delay_seconds, limit_msg,
@@ -112,7 +124,13 @@ async def scrape_adzuna_batch(
 
                     new = [v for v in results if str(v["id"]) not in seen_ids]
 
-                    # Trim to stay within limit
+                    # Per-query cap first — keeps geographic / role diversity
+                    # by preventing the first few queries from filling the
+                    # global bucket.
+                    if max_vacancies_per_query:
+                        new = new[:max_vacancies_per_query]
+
+                    # Then trim to stay within the global limit.
                     if max_vacancies:
                         remaining = max_vacancies - len(all_vacancies)
                         new = new[:remaining]

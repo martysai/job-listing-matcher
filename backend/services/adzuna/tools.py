@@ -29,7 +29,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from adzuna.config import EXTRACTOR_MODEL, MAX_VACANCIES_PER_RUN
+from adzuna.config import EXTRACTOR_MODEL, MAX_VACANCIES_PER_QUERY, MAX_VACANCIES_PER_RUN
 from adzuna.counter import ProfileCounter, QueryBuilder
 from adzuna.extractor import extract_vacancy_fields_batch
 from adzuna.indexer import partial_reindex, vectorize_vacancies
@@ -97,11 +97,20 @@ def build_tools(ctx: RefreshContext) -> list:
             ]
             log.info("scrape_vacancies: broadened — location filter removed")
 
-        raw = asyncio.run(scrape_adzuna_batch(queries, max_vacancies=MAX_VACANCIES_PER_RUN))
+        raw = asyncio.run(scrape_adzuna_batch(
+            queries,
+            max_vacancies=MAX_VACANCIES_PER_RUN,
+            max_vacancies_per_query=MAX_VACANCIES_PER_QUERY,
+        ))
         ctx.raw_vacancies = raw
 
         mode = "FALLBACK" if ctx.counter.is_cold() else "COUNTER-DRIVEN"
-        limit_msg = f"  (limit: {MAX_VACANCIES_PER_RUN})" if MAX_VACANCIES_PER_RUN else ""
+        limit_bits = []
+        if MAX_VACANCIES_PER_RUN:
+            limit_bits.append(f"total {MAX_VACANCIES_PER_RUN}")
+        if MAX_VACANCIES_PER_QUERY:
+            limit_bits.append(f"per-query {MAX_VACANCIES_PER_QUERY}")
+        limit_msg = f"  (limits: {', '.join(limit_bits)})" if limit_bits else ""
         return (
             f"Scraped {len(raw)} unique vacancies {limit_msg}.  "
             f"Mode: {mode}.  Queries executed: {len(queries)}."

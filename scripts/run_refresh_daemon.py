@@ -23,8 +23,8 @@ Usage
     python scripts/run_refresh_daemon.py
 
 Honours every VACANCY_REFRESH_* env knob from ``.env`` plus
-``ADZUNA_MAX_VACANCIES`` and ``VACANCY_EXTRACTOR_DELAY`` for throughput
-tuning.  Stop with Ctrl-C.
+``ADZUNA_MAX_VACANCIES`` / ``ADZUNA_MAX_PER_QUERY`` and
+``VACANCY_EXTRACTOR_DELAY`` for throughput tuning.  Stop with Ctrl-C.
 """
 
 from __future__ import annotations
@@ -49,6 +49,15 @@ load_dotenv(REPO_ROOT / ".env")
 # Force-enable the loop regardless of what the API server's .env says;
 # the daemon's whole purpose is to run the loop.
 os.environ["VACANCY_REFRESH_ENABLED"] = "true"
+
+# LLM provider split: daemon defaults to GitHub Models primary (Anthropic
+# fallback, Mistral last) so it doesn't compete with the API server's chat
+# path, which keeps Anthropic primary.  Operators can override per-process
+# via DAEMON_LLM_PROVIDER_ORDER.  This MUST be set before any router import
+# because config.provider_order() reads the env var at every call site.
+os.environ["LLM_PROVIDER_ORDER"] = os.environ.get(
+    "DAEMON_LLM_PROVIDER_ORDER", "github,anthropic,mistral"
+)
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),

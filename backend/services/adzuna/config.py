@@ -61,6 +61,12 @@ EXTRACTOR_DELAY_SECONDS: float = float(
 _max_vac = os.environ.get("ADZUNA_MAX_VACANCIES")
 MAX_VACANCIES_PER_RUN: int | None = int(_max_vac) if _max_vac else None
 
+# Per-query cap so the global MAX_VACANCIES_PER_RUN bucket fills evenly
+# across all (location × role) queries instead of being saturated by the
+# first 1-2 productive ones.  With 9 queries × 5 → ~45 vacancies / cycle.
+_max_per_query = os.environ.get("ADZUNA_MAX_PER_QUERY")
+MAX_VACANCIES_PER_QUERY: int | None = int(_max_per_query) if _max_per_query else None
+
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 # Adzuna vacancies appended here for BM25 index rebuild at pipeline startup.
