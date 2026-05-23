@@ -130,13 +130,13 @@ def _format_salary(raw) -> str | None:
     sym = _CURRENCY_SYMBOLS.get(cur, cur + " " if cur else "")
     lo, hi = raw.get("min"), raw.get("max")
     usd = raw.get("salary_in_usd")
-    if lo and hi:
+    if lo is not None and hi is not None:
         return f"{sym}{int(lo):,} – {int(hi):,}"
-    if lo:
+    if lo is not None:
         return f"from {sym}{int(lo):,}"
-    if hi:
+    if hi is not None:
         return f"up to {sym}{int(hi):,}"
-    if usd:
+    if usd is not None:
         return f"~${int(usd):,}"
     return None
 
