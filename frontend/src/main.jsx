@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
+import LogsPage from "./Logs.jsx";
 
 // ── Global styles ─────────────────────────────────────────────────────────────
 const style = document.createElement("style");
@@ -52,12 +53,19 @@ style.textContent = `
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .logs-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .logs-row:hover { background: var(--bubble-bg); }
 `;
 document.head.appendChild(style);
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Direct-access /logs viewer; no link from the chat app, same cookie auth.
+const path = window.location.pathname.replace(/\/+$/, "");
+const Root = path === "/logs" ? LogsPage : App;
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <App />
+    <Root />
   </StrictMode>
 );
