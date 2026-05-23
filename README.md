@@ -33,26 +33,9 @@ built to exploit exactly that signal.
 
 Cleanly separated components, each with a single responsibility:
 
-```
-            React chat UI  (SSE streaming, results panel)
-                          │
-                          ▼
-   FastAPI backend  ── auth · chat · history · logs routes ─┐
-                          │                                 │
-   ┌──────────────────────┼─────────────────────────────┐   │
-   │  Conversation LLM     Profile-extraction LLM       │   │  JSONL audit log
-   │  (fast, streaming) →  (more capable, free-text →   │   │  of every LLM
-   │  collects prefs       structured schema)           │   │  input/output
-   └──────────────────────┬─────────────────────────────┘   │
-                          ▼                                 │
-      Hybrid retrieval  →  LambdaRank reranker  →  ranked vacancies
-   (Chroma dense + BM25,
-      fused with RRF)
-
-   Background (scheduled):
-     cron / Celery → LangGraph ReAct agent → Adzuna API scrape
-      → field extraction → Chroma upsert (+TTL) + BM25 refresh
-```
+<p align="center">
+  <img src="docs/architecture.png" alt="System architecture: React chat UI → FastAPI backend → Conversation/Profile-extraction LLMs → Hybrid retrieval (Chroma + BM25, RRF) → LambdaRank reranker → ranked vacancies, with a scheduled LangGraph ReAct agent refreshing the index from Adzuna." width="720" />
+</p>
 
 - **Frontend** (`frontend/`) — React single-page chat UI. Streams assistant
   replies token-by-token over Server-Sent Events and slides in a job-results panel
@@ -153,23 +136,35 @@ ADZUNA_APP_ID=
 ADZUNA_APP_KEY=
 ```
 
-### Data (DVC + Google Drive)
+### Data (DVC + Azure Blob Storage)
 
-Raw and processed datasets are tracked with **DVC** and stored in Google
-Drive — they never sit in the git repo. The `.dvc` pointer files under
-`data/` are checked in; the underlying data is fetched on demand.
+Raw and processed datasets are tracked with **DVC** and stored in Azure
+Blob Storage — they never sit in the git repo. The `.dvc` pointer files
+under `data/` are checked in; the underlying data is fetched on demand.
 
-One-time setup per machine:
+The committed remote points at container
+`azure://dvc-data/job-listing-matcher` on storage account
+`msaidovaistorage`.
+
+**Read-only access (everyone)** — copy the SAS below into
+`.dvc/config.local` (gitignored), then `dvc pull`:
 
 ```bash
-pip install -e .[dvc]                    # adds dvc[gdrive]
+pip install -e .[dvc]                    # adds dvc[azure]
 
-# Point DVC at the shared Google Drive folder. The placeholder URL in
-# .dvc/config (gdrive://REPLACE_ME) must be swapped for the real folder
-# ID once. Anyone with read access to the folder can then `dvc pull`.
-dvc remote modify --local gdrive url gdrive://<FOLDER_ID>
+dvc remote modify --local azure sas_token "se=2031-05-23T13%3A34%3A55Z&sp=rl&spr=https&sv=2022-11-02&sr=c&sig=oT/Qrn2KdeMagtXmb2DKRCveI8bz9jzRe/aOTLj22oc%3D"
 
 dvc pull                                 # downloads data/raw/* into place
+```
+
+The SAS is read+list only, scoped to the `dvc-data` container, HTTPS-only,
+expires 2031-05-23. Rotating it is a one-liner; see the maintainer.
+
+**Write access (maintainer)** — use a storage account key or SAS with
+write permission:
+
+```bash
+dvc remote modify --local azure account_key <ACCOUNT_KEY>
 ```
 
 To add a new dataset:
@@ -177,7 +172,7 @@ To add a new dataset:
 ```bash
 dvc add data/raw/my_new_file.jsonl       # creates my_new_file.jsonl.dvc
 git add data/raw/my_new_file.jsonl.dvc
-dvc push                                 # uploads to the Drive remote
+dvc push                                 # uploads to the Azure container
 ```
 
 ## Running

@@ -1,4 +1,5 @@
 [core]
-    remote = gdrive
-['remote "gdrive"']
-    url = gdrive://REPLACE_ME
+    remote = azure
+['remote "azure"']
+    url = azure://dvc-data/job-listing-matcher
+    account_name = msaidovaistorage
