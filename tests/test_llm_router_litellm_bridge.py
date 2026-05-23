@@ -212,3 +212,125 @@ def test_make_chat_model_primary_github_uses_pat(monkeypatch, tmp_path) -> None:
     assert runnable.kwargs["api_key"] == "github_pat_PRIMARY"
     assert runnable.fallbacks is not None and len(runnable.fallbacks) == 1
     assert runnable.fallbacks[0].kwargs["model"] == "mistral/mistral-small-latest"
+
+
+# ── make_chat_model: primary-auth-failure demotion ──────────────────────
+
+
+def test_make_chat_model_primary_github_missing_pat_demotes(monkeypatch, tmp_path) -> None:
+    """If GitHub Models is the primary but its PAT file is missing, the
+    router-shaped contract says: don't crash, just promote the next
+    provider to primary."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "github,mistral")
+    monkeypatch.setenv(
+        "GITHUB_MODELS_KEY_PATH", str(tmp_path / "does_not_exist.txt")
+    )
+    _install_fake_chatlitellm(monkeypatch)
+
+    runnable = litellm_bridge.make_chat_model(tier="small")
+
+    assert isinstance(runnable, _FakeChatLiteLLM)
+    assert runnable.kwargs["model"] == "mistral/mistral-small-latest"
+    # Was the sole survivor → no fallback chain attached.
+    assert runnable.fallbacks is None
+
+
+def test_make_chat_model_primary_anthropic_missing_key_demotes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "anthropic,mistral")
+    monkeypatch.setenv(
+        "ANTHROPIC_API_KEY_PATH", str(tmp_path / "no_anthropic.txt")
+    )
+    _install_fake_chatlitellm(monkeypatch)
+
+    runnable = litellm_bridge.make_chat_model(tier="large")
+
+    assert runnable.kwargs["model"] == "mistral/mistral-large-latest"
+    assert runnable.fallbacks is None
+
+
+def test_make_chat_model_no_usable_providers_raises(monkeypatch, tmp_path) -> None:
+    """All providers depend on missing credentials → must raise, not return
+    a broken handle."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "anthropic,github")
+    monkeypatch.setenv(
+        "ANTHROPIC_API_KEY_PATH", str(tmp_path / "no_anth.txt")
+    )
+    monkeypatch.setenv(
+        "GITHUB_MODELS_KEY_PATH", str(tmp_path / "no_gh.txt")
+    )
+    _install_fake_chatlitellm(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="no usable providers"):
+        litellm_bridge.make_chat_model(tier="small")
+
+
+def test_make_chat_model_anthropic_primary_with_key(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "anthropic,github,mistral")
+    anth = tmp_path / "anth.txt"
+    anth.write_text("sk-ant-PRIMARY", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_API_KEY_PATH", str(anth))
+    gh = tmp_path / "gh.txt"
+    gh.write_text("github_pat_FB", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_MODELS_KEY_PATH", str(gh))
+    _install_fake_chatlitellm(monkeypatch)
+
+    runnable = litellm_bridge.make_chat_model(tier="large")
+
+    assert runnable.kwargs["model"] == "anthropic/claude-sonnet-4-6"
+    assert runnable.kwargs["api_key"] == "sk-ant-PRIMARY"
+    assert runnable.fallbacks is not None
+    assert len(runnable.fallbacks) == 2
+    assert runnable.fallbacks[0].kwargs["model"] == "openai/openai/gpt-4o"
+    assert runnable.fallbacks[0].kwargs["api_key"] == "github_pat_FB"
+    assert runnable.fallbacks[1].kwargs["model"] == "mistral/mistral-large-latest"
+
+
+# ── litellm_completion: anthropic primary + secret scrubbing ────────────
+
+
+def test_litellm_completion_anthropic_primary(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "anthropic,github")
+    anth = tmp_path / "anth.txt"
+    anth.write_text("sk-ant-XYZ", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_API_KEY_PATH", str(anth))
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_completion(**kw: Any) -> dict[str, Any]:
+        calls.append(kw)
+        return {"ok": True}
+
+    _install_fake_litellm(monkeypatch, fake_completion)
+
+    litellm_bridge.litellm_completion(tier="large", messages=[])
+
+    assert calls[0]["model"] == "anthropic/claude-sonnet-4-6"
+    assert calls[0]["api_key"] == "sk-ant-XYZ"
+    assert "api_base" not in calls[0]
+
+
+def test_litellm_completion_scrubs_api_key_from_error_summary(monkeypatch, tmp_path) -> None:
+    """If all providers fail and the SDK echoed the api_key into its
+    exception text, the aggregated error must not leak it."""
+    monkeypatch.setenv("LLM_PROVIDER_ORDER", "github")
+    secret = "github_pat_SUPERSECRET"
+    key_file = tmp_path / "k.txt"
+    key_file.write_text(secret, encoding="utf-8")
+    monkeypatch.setenv("GITHUB_MODELS_KEY_PATH", str(key_file))
+
+    class _Transient(Exception):
+        # Class name matches a transient marker in errors.classify.
+        pass
+
+    Transient = type("TimeoutError", (_Transient,), {})
+
+    def fake_completion(**kw: Any) -> dict[str, Any]:
+        raise Transient(f"upstream barfed; api_key={kw['api_key']}")
+
+    _install_fake_litellm(monkeypatch, fake_completion)
+
+    with pytest.raises(RuntimeError) as info:
+        litellm_bridge.litellm_completion(tier="small", messages=[])
+
+    assert secret not in str(info.value)
+    assert "***" in str(info.value)

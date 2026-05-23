@@ -10,10 +10,18 @@ The streaming path applies failover only **before the first token** is
 yielded: once any text has been delivered to the caller, a switch to a
 different provider would duplicate output in the UI, which is worse than a
 visible error.
+
+Cooldown is intentionally **per-provider**, not per-(provider, tier).  For
+low-quota subscriptions (Mistral RPM, GitHub Models daily budget, Anthropic
+org-level TPM) rate limits tend to be account-wide rather than per-model;
+backing off the whole provider trades one possibly-redundant retry for a
+much lower risk of burning quota with repeated 429s.  Revisit if usage
+patterns shift toward per-model quota walls.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -22,17 +30,27 @@ from typing import Callable, Generator, Iterable, Type, TypeVar
 from pydantic import BaseModel
 
 from .config import (
+    PROVIDER_ANTHROPIC,
     PROVIDER_GITHUB,
     PROVIDER_MISTRAL,
     cooldown_seconds,
     provider_order,
 )
 from .errors import classify
-from .providers import GitHubModelsProvider, MistralProvider, Provider
+from .providers import AnthropicProvider, GitHubModelsProvider, MistralProvider, Provider
 
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+
+class _ProviderUnavailable(RuntimeError):
+    """Recorded in the per-call ``errors`` list when a provider is skipped.
+
+    Used so ``AllProvidersFailedError`` always carries a non-empty diagnostic
+    even when the skip was caused by cooldown / factory failure rather than
+    by an exception raised from the API call itself.
+    """
 
 
 class AllProvidersFailedError(RuntimeError):
@@ -40,7 +58,12 @@ class AllProvidersFailedError(RuntimeError):
 
     def __init__(self, errors: list[tuple[str, BaseException]]):
         self.errors = errors
-        summary = "; ".join(f"{name}: {type(exc).__name__}: {exc}" for name, exc in errors)
+        if errors:
+            summary = "; ".join(
+                f"{name}: {type(exc).__name__}: {exc}" for name, exc in errors
+            )
+        else:
+            summary = "no providers configured"
         super().__init__(f"All LLM providers failed: {summary}")
 
 
@@ -58,8 +81,9 @@ class LLMRouter:
         self._providers: dict[str, Provider] = {}
         self._cooldown_until: dict[str, float] = {}
         self._factories: dict[str, Callable[[], Provider]] = provider_factories or {
-            PROVIDER_MISTRAL: MistralProvider,
+            PROVIDER_ANTHROPIC: AnthropicProvider,
             PROVIDER_GITHUB: GitHubModelsProvider,
+            PROVIDER_MISTRAL: MistralProvider,
         }
 
     # ── public API ────────────────────────────────────────────────────────
@@ -72,13 +96,17 @@ class LLMRouter:
     ) -> Generator[str, None, None]:
         """Stream chat chunks; failover only before the first token."""
         errors: list[tuple[str, BaseException]] = []
-        for name in self._ordered_available():
-            provider = self._get(name)
+        for name, skipped_reason in self._ordered_with_skipped():
+            if skipped_reason is not None:
+                errors.append((name, skipped_reason))
+                continue
+            provider = self._get(name, errors)
             if provider is None:
                 continue
+            iterator: Iterable[str] | None = None
             try:
                 iterator = iter(provider.stream_chat(tier=tier, messages=messages))
-            except BaseException as exc:  # noqa: BLE001 — re-classified below
+            except Exception as exc:
                 if self._handle_error(name, exc, errors) == "fatal":
                     raise
                 continue
@@ -88,7 +116,12 @@ class LLMRouter:
                 for chunk in iterator:
                     first = chunk
                     break
-            except BaseException as exc:  # noqa: BLE001
+            except Exception as exc:
+                # Close the generator so the underlying HTTP context manager
+                # (e.g. Mistral's ``with client.chat.stream(...)``) is exited
+                # deterministically rather than waiting on GC.
+                with contextlib.suppress(Exception):
+                    iterator.close()  # type: ignore[union-attr]
                 if self._handle_error(name, exc, errors) == "fatal":
                     raise
                 continue
@@ -112,8 +145,11 @@ class LLMRouter:
         response_format: Type[T],
     ) -> T:
         errors: list[tuple[str, BaseException]] = []
-        for name in self._ordered_available():
-            provider = self._get(name)
+        for name, skipped_reason in self._ordered_with_skipped():
+            if skipped_reason is not None:
+                errors.append((name, skipped_reason))
+                continue
+            provider = self._get(name, errors)
             if provider is None:
                 continue
             try:
@@ -122,7 +158,7 @@ class LLMRouter:
                     prompt=prompt,
                     response_format=response_format,
                 )
-            except BaseException as exc:  # noqa: BLE001
+            except Exception as exc:
                 if self._handle_error(name, exc, errors) == "fatal":
                     raise
                 continue
@@ -130,26 +166,62 @@ class LLMRouter:
 
     # ── internals ─────────────────────────────────────────────────────────
 
-    def _ordered_available(self) -> list[str]:
-        now = self._clock()
-        with self._lock:
-            return [
-                name
-                for name in provider_order()
-                if self._cooldown_until.get(name, 0.0) <= now
-            ]
+    def _ordered_with_skipped(self) -> list[tuple[str, BaseException | None]]:
+        """Return ``[(provider_name, skipped_reason_or_None), ...]``.
 
-    def _get(self, name: str) -> Provider | None:
+        Providers in cooldown carry a ``_ProviderUnavailable`` so the caller
+        can record *why* they were skipped instead of returning an empty
+        diagnostic when everything is unavailable.
+
+        If **every** configured provider is in cooldown, we ignore the
+        cooldowns and attempt them all — better to retry and surface fresh
+        errors than to fail with no useful information.
+        """
+        now = self._clock()
+        order = provider_order()
+        with self._lock:
+            entries: list[tuple[str, BaseException | None]] = []
+            available = 0
+            for name in order:
+                until = self._cooldown_until.get(name, 0.0)
+                if until <= now:
+                    entries.append((name, None))
+                    available += 1
+                else:
+                    remaining = until - now
+                    entries.append(
+                        (
+                            name,
+                            _ProviderUnavailable(
+                                f"in cooldown for another {remaining:.1f}s"
+                            ),
+                        )
+                    )
+            if available == 0:
+                # All in cooldown — burn through cooldowns rather than fail
+                # with an empty error list.
+                return [(name, None) for name, _ in entries]
+            return entries
+
+    def _get(
+        self,
+        name: str,
+        errors: list[tuple[str, BaseException]],
+    ) -> Provider | None:
         with self._lock:
             if name in self._providers:
                 return self._providers[name]
             factory = self._factories.get(name)
         if factory is None:
+            errors.append(
+                (name, _ProviderUnavailable(f"no factory registered for {name!r}"))
+            )
             return None
         try:
             provider = factory()
-        except BaseException as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("llm_router: provider %r unavailable at init: %s", name, exc)
+            errors.append((name, exc))
             self._mark_cooldown(name)
             return None
         with self._lock:

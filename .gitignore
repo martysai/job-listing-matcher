@@ -235,3 +235,4 @@ node_modules/
 
 # Local LLM credentials
 key.txt
+anthropic_api_personal_key.txt

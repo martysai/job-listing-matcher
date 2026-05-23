@@ -171,28 +171,23 @@ Rules
 # LLM factory
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tier_for_model_string(model_string: str) -> str:
-    """Heuristic: pick the router tier matching the requested LiteLLM model."""
-    return "large" if "large" in model_string.lower() else "small"
-
-
 def build_llm(model_string: str) -> Any:
     """Вернуть LangChain chat-модель с автоматическим failover.
 
-    Маршрутизация Mistral → GitHub Models построена в
+    Маршрутизация Anthropic → GitHub Models → Mistral построена в
     ``llm_router.litellm_bridge.make_chat_model``; primary провайдер падает —
     LangChain автоматически переключится на fallback через
     ``.with_fallbacks([...])``.
 
     ``model_string`` остаётся для обратной совместимости — мы используем его
-    только чтобы выбрать tier (``"large"`` если в строке есть ``large``,
-    иначе ``"small"``).  Конкретные model id'ы каждого провайдера хранятся
-    в ``llm_router.config.TIERS``.
+    только чтобы выбрать tier через ``llm_router.config.tier_for_model_string``.
+    Конкретные model id'ы каждого провайдера хранятся в
+    ``llm_router.config.TIERS``.
     """
     from llm_router import make_chat_model
+    from llm_router.config import tier_for_model_string
 
-    tier = _tier_for_model_string(model_string)
-    return make_chat_model(tier=tier, temperature=0)
+    return make_chat_model(tier=tier_for_model_string(model_string), temperature=0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

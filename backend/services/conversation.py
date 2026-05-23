@@ -126,7 +126,7 @@ class ConversationService:
                 event="parse_start",
                 session_id=session_id,
             )
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             parsed = await loop.run_in_executor(None, parse_job_request, user_text)
             log_sink.append(
                 ts=time.time(),
