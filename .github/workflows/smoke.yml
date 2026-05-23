@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      VACANCIES_PATH: tests/fixtures/vacancies_smoke.jsonl
+      VACANCIES_PATH: ${{ github.workspace }}/tests/fixtures/vacancies_smoke.jsonl
       CHROMA_DIR: /tmp/chroma-smoke
       HTTPS: "false"
       VACANCY_REFRESH_ENABLED: "false"
