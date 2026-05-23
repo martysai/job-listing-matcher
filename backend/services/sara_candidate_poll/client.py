@@ -1,4 +1,4 @@
-"""Structured-parse client backed by the LLM router (Anthropic → GitHub Models → Mistral)."""
+"""Structured-parse client backed by the LLM router (GitHub Models → Anthropic → Mistral)."""
 
 from typing import Type, TypeVar
 

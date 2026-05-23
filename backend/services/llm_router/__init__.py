@@ -3,7 +3,7 @@
 Public API:
 
 * ``stream_chat(messages, *, tier)`` — async chat-completion stream with
-  per-provider failover.  Default order is Anthropic → GitHub Models →
+  per-provider failover.  Default order is GitHub Models → Anthropic →
   Mistral (override via ``LLM_PROVIDER_ORDER``).
 * ``parse_structured(prompt, response_format, *, tier)`` — Pydantic-typed
   structured response with failover.

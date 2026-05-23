@@ -7,9 +7,9 @@ import pytest
 from llm_router import config
 
 
-def test_default_provider_order_is_anthropic_first(monkeypatch) -> None:
+def test_default_provider_order_is_github_first(monkeypatch) -> None:
     monkeypatch.delenv("LLM_PROVIDER_ORDER", raising=False)
-    assert config.provider_order() == ("anthropic", "github", "mistral")
+    assert config.provider_order() == ("github", "anthropic", "mistral")
 
 
 def test_provider_order_env_override_full(monkeypatch) -> None:

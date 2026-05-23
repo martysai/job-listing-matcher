@@ -174,7 +174,7 @@ Rules
 def build_llm(model_string: str) -> Any:
     """Вернуть LangChain chat-модель с автоматическим failover.
 
-    Маршрутизация Anthropic → GitHub Models → Mistral построена в
+    Маршрутизация GitHub Models → Anthropic → Mistral построена в
     ``llm_router.litellm_bridge.make_chat_model``; primary провайдер падает —
     LangChain автоматически переключится на fallback через
     ``.with_fallbacks([...])``.

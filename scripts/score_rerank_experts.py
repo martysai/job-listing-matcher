@@ -399,7 +399,7 @@ def create_llm(*, model: str, api_base: str | None):
     """Build the LangChain runnable used by the rerank scoring loop.
 
     Routes through ``llm_router.make_chat_model`` so primary→fallback failover
-    is wired in automatically (Anthropic → GitHub Models → Mistral by
+    is wired in automatically (GitHub Models → Anthropic → Mistral by
     default).  The ``model`` argument is retained for backward compatibility
     with the CLI; we use ``llm_router.config.tier_for_model_string`` to map
     it to a router tier.

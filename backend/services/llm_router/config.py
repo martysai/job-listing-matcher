@@ -11,10 +11,10 @@ Each tier maps to a concrete model id per provider.  Provider order and
 cooldown duration are env-driven so they can be flipped without code edits.
 
 Default attempt order is reliability-first across three educational/low-quota
-subscriptions: Anthropic (highest quality, primary) → GitHub Models (OpenAI
-SDK over models.github.ai, fallback) → Mistral (third).  The Anthropic model
-id defaults to the latest stable ``claude-sonnet-4-6`` for both tiers and
-can be overridden per tier via env vars (see ``_anthropic_model``).
+subscriptions: GitHub Models (OpenAI SDK over models.github.ai, primary) →
+Anthropic (Claude Sonnet, fallback) → Mistral (third).  The Anthropic
+model id defaults to the latest stable ``claude-sonnet-4-6`` for both tiers
+and can be overridden per tier via env vars (see ``_anthropic_model``).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GITHUB = "github"
 PROVIDER_MISTRAL = "mistral"
 
-DEFAULT_PROVIDER_ORDER = (PROVIDER_ANTHROPIC, PROVIDER_GITHUB, PROVIDER_MISTRAL)
+DEFAULT_PROVIDER_ORDER = (PROVIDER_GITHUB, PROVIDER_ANTHROPIC, PROVIDER_MISTRAL)
 
 ALL_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_GITHUB, PROVIDER_MISTRAL)
 
